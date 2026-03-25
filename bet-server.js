@@ -89,10 +89,10 @@ app.post('/bet/place', (req, res) => {
   if (isNaN(amt) || amt < d.settings.minBet || amt > d.settings.maxBet)
     return res.json({ ok: false, msg: `Amount ₹${d.settings.minBet} se ₹${d.settings.maxBet} ke beech hona chahiye` });
 
-  // UTR validation: must be numeric, 12 digits
-  const cleanUTR = utr.toString().trim();
-  if (!/^\d{12}$/.test(cleanUTR))
-    return res.json({ ok: false, msg: 'UTR number 12 digits ka hona chahiye (sirf numbers)' });
+  // UTR validation: 6-16 digits, flexible for PhonePe/GPay/Paytm
+  const cleanUTR = utr.toString().trim().replace(/\s/g, '');
+  if (!/^\d{6,16}$/.test(cleanUTR))
+    return res.json({ ok: false, msg: 'UTR number galat hai — sirf numbers daalo (6-16 digit)' });
 
   // Duplicate UTR check (across ALL rounds)
   const allBets = d.rounds.flatMap(r => r.bets);
@@ -128,10 +128,18 @@ app.post('/bet/mystatus', (req, res) => {
   const { userCode } = req.body;
   if (!userCode) return res.json({ ok: false });
   const d = load();
-  const round = getCurrentRound(d);
+  const cleanCode = userCode.trim().toUpperCase();
+
+  // Check active round first, then most recent result round
+  let round = getCurrentRound(d);
+  if (!round) {
+    // Show last result round so user can see outcome
+    const resultRounds = d.rounds.filter(r => r.status === 'result');
+    round = resultRounds.length ? resultRounds[resultRounds.length - 1] : null;
+  }
   if (!round) return res.json({ ok: true, bet: null, round: null });
 
-  const bet = round.bets.find(b => b.userCode === userCode.trim().toUpperCase());
+  const bet = round.bets.find(b => b.userCode === cleanCode);
   const roundInfo = { status: round.status, id: round.id };
   if (round.status === 'result') roundInfo.winNum = round.winNum;
 
@@ -286,11 +294,12 @@ app.post('/admin/settings', (req, res) => {
   if (!auth(req)) return res.status(401).json({ ok: false });
   const { upiId, upiName, minBet, maxBet, multiplier } = req.body;
   const d = load();
-  if (upiId) d.settings.upiId = upiId;
-  if (upiName) d.settings.upiName = upiName;
-  if (minBet) d.settings.minBet = parseInt(minBet);
-  if (maxBet) d.settings.maxBet = parseInt(maxBet);
-  if (multiplier) d.settings.multiplier = parseInt(multiplier);
+  // Always save — even if empty string (fixes settings overwrite bug)
+  if (upiId !== undefined) d.settings.upiId = upiId;
+  if (upiName !== undefined) d.settings.upiName = upiName;
+  if (minBet !== undefined && minBet !== '') d.settings.minBet = parseInt(minBet);
+  if (maxBet !== undefined && maxBet !== '') d.settings.maxBet = parseInt(maxBet);
+  if (multiplier !== undefined && multiplier !== '') d.settings.multiplier = parseInt(multiplier);
   save(d);
   res.json({ ok: true, settings: d.settings });
 });
