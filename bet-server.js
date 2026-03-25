@@ -22,7 +22,9 @@ function load() {
       upiName: 'Admin Name',
       minBet: 100,
       maxBet: 50000,
-      multiplier: 9
+      multiplier: 9,
+      betMinutes: 40,
+      totalMinutes: 60
     },
     stats: { totalBets: 0, totalAmount: 0, totalPayout: 0 }
   };
@@ -63,6 +65,15 @@ app.get('/round/current', (req, res) => {
   });
   safe.numTotals = numTotals;
 
+  // Timer
+  if (round.openedAt) {
+    const now = Date.now();
+    safe.openedAt = round.openedAt;
+    safe.betEndsAt = round.openedAt + ((d.settings.betMinutes||40)*60000);
+    safe.roundEndsAt = round.openedAt + ((d.settings.totalMinutes||60)*60000);
+    safe.betMinutes = d.settings.betMinutes || 40;
+    safe.totalMinutes = d.settings.totalMinutes || 60;
+  }
   return res.json({ ok: true, round: safe, settings: d.settings });
 });
 
@@ -89,10 +100,10 @@ app.post('/bet/place', (req, res) => {
   if (isNaN(amt) || amt < d.settings.minBet || amt > d.settings.maxBet)
     return res.json({ ok: false, msg: `Amount ₹${d.settings.minBet} se ₹${d.settings.maxBet} ke beech hona chahiye` });
 
-  // UTR validation: 6-16 digits, flexible for PhonePe/GPay/Paytm
+  // UTR validation: 6-16 digits flexible
   const cleanUTR = utr.toString().trim().replace(/\s/g, '');
   if (!/^\d{6,16}$/.test(cleanUTR))
-    return res.json({ ok: false, msg: 'UTR number galat hai — sirf numbers daalo (6-16 digit)' });
+    return res.json({ ok: false, msg: 'UTR galat hai — sirf numbers daalo (6-16 digit)' });
 
   // Duplicate UTR check (across ALL rounds)
   const allBets = d.rounds.flatMap(r => r.bets);
@@ -129,21 +140,28 @@ app.post('/bet/mystatus', (req, res) => {
   if (!userCode) return res.json({ ok: false });
   const d = load();
   const cleanCode = userCode.trim().toUpperCase();
-
-  // Check active round first, then most recent result round
   let round = getCurrentRound(d);
   if (!round) {
-    // Show last result round so user can see outcome
     const resultRounds = d.rounds.filter(r => r.status === 'result');
     round = resultRounds.length ? resultRounds[resultRounds.length - 1] : null;
   }
   if (!round) return res.json({ ok: true, bet: null, round: null });
-
   const bet = round.bets.find(b => b.userCode === cleanCode);
   const roundInfo = { status: round.status, id: round.id };
   if (round.status === 'result') roundInfo.winNum = round.winNum;
-
-  return res.json({ ok: true, bet: bet || null, round: roundInfo });
+  // Timer info
+  if (round.openedAt) {
+    const now = Date.now();
+    const betMs = (d.settings.betMinutes || 40) * 60000;
+    const totalMs = (d.settings.totalMinutes || 60) * 60000;
+    const elapsed = now - round.openedAt;
+    roundInfo.openedAt = round.openedAt;
+    roundInfo.betEndsAt = round.openedAt + betMs;
+    roundInfo.roundEndsAt = round.openedAt + totalMs;
+    roundInfo.betMinutes = d.settings.betMinutes || 40;
+    roundInfo.totalMinutes = d.settings.totalMinutes || 60;
+  }
+  return res.json({ ok: true, bet: bet || null, round: roundInfo, settings: d.settings });
 });
 
 // ─── ADMIN: Get full data ─────────────────────────────────
@@ -292,14 +310,15 @@ app.post('/admin/bet/paid', (req, res) => {
 // ─── ADMIN: Update settings ───────────────────────────────
 app.post('/admin/settings', (req, res) => {
   if (!auth(req)) return res.status(401).json({ ok: false });
-  const { upiId, upiName, minBet, maxBet, multiplier } = req.body;
+  const { upiId, upiName, minBet, maxBet, multiplier, betMinutes, totalMinutes } = req.body;
   const d = load();
-  // Always save — even if empty string (fixes settings overwrite bug)
   if (upiId !== undefined) d.settings.upiId = upiId;
   if (upiName !== undefined) d.settings.upiName = upiName;
   if (minBet !== undefined && minBet !== '') d.settings.minBet = parseInt(minBet);
   if (maxBet !== undefined && maxBet !== '') d.settings.maxBet = parseInt(maxBet);
   if (multiplier !== undefined && multiplier !== '') d.settings.multiplier = parseInt(multiplier);
+  if (betMinutes !== undefined && betMinutes !== '') d.settings.betMinutes = parseInt(betMinutes);
+  if (totalMinutes !== undefined && totalMinutes !== '') d.settings.totalMinutes = parseInt(totalMinutes);
   save(d);
   res.json({ ok: true, settings: d.settings });
 });
@@ -311,5 +330,19 @@ app.get('/admin/history', (req, res) => {
   const history = d.rounds.filter(r => r.status === 'result').slice(-20).reverse();
   res.json({ ok: true, history });
 });
+
+// Auto-close betting when time is up
+setInterval(() => {
+  const d = load();
+  const round = d.rounds.find(r => r.status === 'open');
+  if (!round) return;
+  const betMs = (d.settings.betMinutes || 40) * 60000;
+  if (Date.now() >= round.openedAt + betMs) {
+    round.status = 'closed';
+    round.closedAt = Date.now();
+    save(d);
+    console.log('Auto-closed round: ' + round.id);
+  }
+}, 30000); // Check every 30 seconds
 
 app.listen(PORT, '0.0.0.0', () => console.log('BET SERVER running on port ' + PORT));
