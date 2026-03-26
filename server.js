@@ -53,6 +53,16 @@ app.post('/login', (req, res) => {
   return res.json({ ok: true, user: { code: user.code, name: user.name }, settings: d.settings });
 });
 
+// VERIFY SESSION — ek baar login ke baad session verify karta hai, dobara code nahi maangta
+app.post('/verify', (req, res) => {
+  const { code } = req.body;
+  if (!code) return res.json({ ok: false });
+  const d = load();
+  const user = d.users.find(u => u.code === code.trim().toUpperCase());
+  if (!user) return res.json({ ok: false, msg: 'Session expire ho gaya — dobara login karo' });
+  return res.json({ ok: true, user: { code: user.code, name: user.name }, settings: d.settings });
+});
+
 // ROUND INFO (public)
 app.get('/round', (req, res) => {
   const d = load();
@@ -179,6 +189,7 @@ app.post('/admin/user', (req, res) => {
   res.json({ ok:true, code, name:name||'User' });
 });
 
+// MANUAL DELETE ONLY — admin khud delete kare tab
 app.delete('/admin/user/:code', (req, res) => {
   if (!auth(req)) return res.status(401).json({ ok: false });
   const d = load(); d.users = d.users.filter(u=>u.code!==req.params.code); save(d); res.json({ ok: true });
@@ -203,10 +214,32 @@ app.post('/admin/settings', (req, res) => {
   save(d); res.json({ ok:true, settings:d.settings });
 });
 
+// HISTORY — poora data, saari bets ke saath
 app.get('/admin/history', (req, res) => {
   if (!auth(req)) return res.status(401).json({ ok: false });
   const d = load();
-  res.json({ ok:true, history:d.rounds.filter(r=>r.status==='result').slice(-20).reverse() });
+  const history = d.rounds.filter(r=>r.status==='result').reverse();
+  res.json({ ok:true, history });
+});
+
+// EK ROUND KI HISTORY DELETE — manual
+app.delete('/admin/history/:roundId', (req, res) => {
+  if (!auth(req)) return res.status(401).json({ ok: false });
+  const d = load();
+  const before = d.rounds.length;
+  d.rounds = d.rounds.filter(r => r.id !== req.params.roundId);
+  if (d.rounds.length === before) return res.json({ ok: false, msg: 'Round nahi mila' });
+  save(d);
+  res.json({ ok: true });
+});
+
+// SAARI HISTORY CLEAR
+app.delete('/admin/history', (req, res) => {
+  if (!auth(req)) return res.status(401).json({ ok: false });
+  const d = load();
+  d.rounds = d.rounds.filter(r => r.status !== 'result');
+  save(d);
+  res.json({ ok: true });
 });
 
 app.listen(PORT, '0.0.0.0', () => console.log('Server on ' + PORT));
