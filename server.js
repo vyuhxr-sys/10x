@@ -13,7 +13,7 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 const ADMIN_PASS = process.env.ADMIN_PASS || 'ADMIN2026';
 
-app.use(cors({ origin: '*' }));
+app.use(cors({ origin: true }));
 app.use(express.json({ limit: '10mb' }));
 
 // ═══════════════════════════════════════════════════════════
