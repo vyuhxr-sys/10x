@@ -37,14 +37,45 @@ app.use((req, res, next) => {
 });
 
 // ═══════════════════════════════════════════════════════════
-// FIX 3: API SECRET MIDDLEWARE (protects public user routes)
+// FIX 3: APP SECRET + USER-AGENT MIDDLEWARE (anti-clone)
 // ═══════════════════════════════════════════════════════════
-function verifyApi(req, res, next) {
-  const key = req.headers['x-api-key'];
-  if (key !== process.env.API_SECRET) {
-    return res.status(403).json({ ok: false, msg: 'Unauthorized' });
+const APP_SECRET = process.env.APP_SECRET || "rinku_secret_123";
+
+function checkApp(req, res, next) {
+  if (req.headers['x-app'] !== APP_SECRET) {
+    return res.status(403).json({ ok: false, msg: 'Invalid App' });
   }
   next();
+}
+
+function checkUA(req, res, next) {
+  if (!req.headers['user-agent']) {
+    return res.status(403).json({ ok: false, msg: 'Blocked' });
+  }
+  next();
+}
+
+// Apply app-level middleware (replaces verifyApi on all routes)
+app.use(checkApp);
+app.use(checkUA);
+
+// ── TOKEN SYSTEM ──────────────────────────────────────────
+function createToken() {
+  return Math.random().toString(36).substr(2) + Date.now();
+}
+
+// Verify user via token (for protected routes like /withdraw, /coins/buy)
+async function verifyUser(req, res, next) {
+  const token = req.headers['x-token'];
+  if (!token) return res.status(403).json({ ok: false, msg: 'No token' });
+  try {
+    const snap = await C.users().where('token', '==', token).limit(1).get();
+    if (snap.empty) return res.status(403).json({ ok: false, msg: 'Invalid token' });
+    req.user = snap.docs[0].data();
+    next();
+  } catch(e) {
+    return res.status(403).json({ ok: false, msg: 'Token verify failed' });
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -384,7 +415,7 @@ setInterval(async () => {
 app.get('/', (req, res) => res.json({ status: 'OK' }));
 
 // ── LOGIN ─────────────────────────────────────────────────
-app.post('/login', verifyApi, async (req, res) => {
+app.post('/login', async (req, res) => {
   const { code, deviceId } = req.body;
   const ip = getIP(req);
   if (!code) return res.json({ ok:false, msg:'Code daalo' });
@@ -431,13 +462,18 @@ app.post('/login', verifyApi, async (req, res) => {
     return res.json({ ok:false, msg:'Yeh code doosre phone pe use ho chuka hai. Admin se contact karo.' });
   }
   if (user.coins === undefined) updates.coins = 0;
+
+  // Generate and save login token
+  const token = createToken();
+  updates.token = token;
+
   await updateUser(cleanCode, updates);
 
-  return res.json({ ok:true, user:{ code:user.code, name:user.name, coins:user.coins||0 }, settings });
+  return res.json({ ok:true, token, user:{ code:user.code, name:user.name, coins:user.coins||0 }, settings });
 });
 
 // ── VERIFY (auto-login) ───────────────────────────────────
-app.post('/verify', verifyApi, async (req, res) => {
+app.post('/verify', async (req, res) => {
   const { code } = req.body;
   if (!code) return res.json({ ok:false });
   const cleanCode = clean(code.trim().toUpperCase());
@@ -542,7 +578,7 @@ app.post('/myhistory', async (req, res) => {
 });
 
 // ── PLACE BET ─────────────────────────────────────────────
-app.post('/bet', verifyApi, async (req, res) => {
+app.post('/bet', verifyUser, async (req, res) => {
   const { code, number, amount, utr, userUpi } = req.body;
   const ip = getIP(req);
   if (!code||number===undefined||!amount||!utr||!userUpi)
@@ -597,7 +633,7 @@ app.post('/bet', verifyApi, async (req, res) => {
 });
 
 // ── WITHDRAW REQUEST ──────────────────────────────────────
-app.post('/withdraw', verifyApi, async (req, res) => {
+app.post('/withdraw', verifyUser, async (req, res) => {
   const { code, amount, upi } = req.body;
   if (!code||!amount||!upi) return res.json({ ok:false, msg:'Saari details daalo' });
   const cleanCode = clean(code.trim().toUpperCase());
@@ -613,7 +649,7 @@ app.post('/withdraw', verifyApi, async (req, res) => {
 });
 
 // ── COIN BUY REQUEST ──────────────────────────────────────
-app.post('/coins/buy', verifyApi, async (req, res) => {
+app.post('/coins/buy', verifyUser, async (req, res) => {
   const { code, amount, utr } = req.body;
   if (!code||!amount||!utr) return res.json({ ok:false, msg:'Saari details daalo' });
   const cleanCode = clean(code.trim().toUpperCase());
