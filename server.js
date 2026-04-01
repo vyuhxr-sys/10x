@@ -42,6 +42,8 @@ app.use((req, res, next) => {
 const APP_SECRET = process.env.APP_SECRET || "rinku_secret_123";
 
 function checkApp(req, res, next) {
+  // Admin routes have their own dual-key auth — skip x-app check for them
+  if (req.path.startsWith('/admin')) return next();
   if (req.headers['x-app'] !== APP_SECRET) {
     return res.status(403).json({ ok: false, msg: 'Invalid App' });
   }
