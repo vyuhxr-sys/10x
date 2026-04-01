@@ -906,12 +906,12 @@ app.post('/admin/user/coins', async (req, res) => {
 
 app.post('/admin/user/ban', async (req, res) => {
   if (!auth(req)) return res.status(401).json({ ok:false });
-  const { code, blockDevice } = req.body;
+  const { code, blockDevice: shouldBlockDevice } = req.body;
   const user = await getUser(code);
   if (!user) return res.json({ ok:false });
   await updateUser(code, { banned:true, bannedAt:Date.now() });
-  if (blockDevice && user.deviceId) await blockDevice(user.deviceId);
-  await secLog('USER_BANNED', { code, blockDevice:blockDevice||false });
+  if (shouldBlockDevice && user.deviceId) await blockDevice(user.deviceId);
+  await secLog('USER_BANNED', { code, blockDevice:shouldBlockDevice||false });
   res.json({ ok:true });
 });
 
@@ -953,6 +953,7 @@ app.get('/admin/user/:code', async (req, res) => {
     coinHistory:coinReqs,
     withdrawHistory:wdReqs,
     betHistory:betList,
+    securityFlags:[],
     risk:{ score:0, reasons:[] }
   });
 });
