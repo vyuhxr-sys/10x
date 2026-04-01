@@ -129,6 +129,28 @@ function getIP(req) {
   return req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
 }
 
+// ── UID & CODE GENERATORS ─────────────────────────────────
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).substr(2);
+}
+
+function genCode() {
+  const part1 = Math.random().toString(36).substr(2, 4).toUpperCase();
+  const part2 = Math.random().toString(36).substr(2, 4).toUpperCase();
+  return part1 + '-' + part2;
+}
+
+async function generateUniqueCode() {
+  let code;
+  let exists = true;
+  while (exists) {
+    code = genCode();
+    const user = await getUser(code);
+    if (!user) exists = false;
+  }
+  return code;
+}
+
 // ── SETTINGS ──────────────────────────────────────────────
 const defaultSettings = {
   upiId:'', upiName:'Admin', minBet:10, maxBet:5000,
@@ -368,6 +390,12 @@ app.post('/login', verifyApi, async (req, res) => {
   if (!code) return res.json({ ok:false, msg:'Code daalo' });
   const cleanCode = clean(code.trim().toUpperCase());
 
+  // IP block check
+  const blockedIP = await C.blocked().doc('ip_'+ip.replace(/[:.]/g,'_')).get();
+  if (blockedIP.exists) {
+    return res.json({ ok:false, msg:'Aapka IP blocked hai. Admin se contact karo.' });
+  }
+
   if (!checkRate('login:'+ip, 10, 60000)) {
     await secLog('RATE_LIMIT', { ip, code: cleanCode, action:'login' });
     return res.json({ ok:false, msg:'Bahut zyada attempts. 1 minute baad try karo.' });
@@ -564,6 +592,7 @@ app.post('/bet', verifyApi, async (req, res) => {
     status:'pending', placedAt:Date.now(), won:null, winAmount:null, paid:false
   };
   await createBet(bet);
+  await secLog('BET_PLACED', { code: cleanCode, amount: amt, number: num, utr: cleanUTR, roundId: round.id });
   return res.json({ ok:true, bet:{ id:bet.id, number:num, amount:amt, status:'pending' } });
 });
 
@@ -809,7 +838,7 @@ app.post('/admin/withdraw/action', async (req, res) => {
 app.post('/admin/user', async (req, res) => {
   if (!auth(req)) return res.status(401).json({ ok:false });
   const { name } = req.body;
-  const code = genCode();
+  const code = await generateUniqueCode();
   await createUser({ code, name:name||'User', createdAt:Date.now(), deviceId:null, coins:0, banned:false });
   res.json({ ok:true, code, name:name||'User' });
 });
