@@ -1,9 +1,3 @@
-/**
- * NUMBET SERVER v5.0 — Multi-Collection Firebase Architecture
- * Collections: users, rounds, bets, coinRequests, withdrawRequests, meta, settings, securityLog
- * Supports 100,000+ users — no single-document size limits
- */
-
 const express = require('express');
 const cors = require('cors');
 const { initializeApp, cert } = require('firebase-admin/app');
@@ -144,18 +138,23 @@ function checkAdmin(ip) {
   return true;
 }
 
-// Fix 1: Updated auth with dual-key + brute force protection
+// Auth: ADMIN_PASS required. ADMIN_KEY is optional second factor.
 function auth(req) {
   const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
   if (!checkAdmin(ip)) return false;
   const pass = req.headers['x-pass'];
-  const key = req.headers['x-key'];
-  if (!pass || !key) return false;
-  const ok = (
-    pass === process.env.ADMIN_PASS &&
-    key === process.env.ADMIN_KEY
-  );
-  if (ok) adminAttempts[ip] = 0; // reset on success
+  if (!pass) return false;
+  // If ADMIN_KEY is set in env, require x-key header too (dual factor)
+  // If ADMIN_KEY is NOT set in env, only check ADMIN_PASS
+  const envKey = process.env.ADMIN_KEY;
+  let ok;
+  if (envKey) {
+    const key = req.headers['x-key'];
+    ok = (pass === process.env.ADMIN_PASS && key === envKey);
+  } else {
+    ok = (pass === process.env.ADMIN_PASS);
+  }
+  if (ok) adminAttempts[ip] = 0;
   return ok;
 }
 function getIP(req) {
