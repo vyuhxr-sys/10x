@@ -1,58 +1,34 @@
-/**
- * NUMBET SERVER v5.0 — Multi-Collection Firebase Architecture
- * Collections: users, rounds, bets, coinRequests, withdrawRequests, meta, settings, securityLog
- * Supports 100,000+ users — no single-document size limits
- */
-
 const express = require('express');
 const cors = require('cors');
-const { initializeApp, cert } = require('firebase-admin/app');
-const { getFirestore, FieldValue } = require('firebase-admin/firestore');
-
+const fs = require('fs');
 const app = express();
 const PORT = process.env.PORT || 10000;
-const ADMIN_PASS = process.env.ADMIN_PASS;
-const ADMIN_KEY  = process.env.ADMIN_KEY;
-if (!ADMIN_PASS || !ADMIN_KEY) {
-  console.error('FATAL: Set ADMIN_PASS and ADMIN_KEY env variables on Render!');
-  process.exit(1);
-}
+const ADMIN_PASS = process.env.ADMIN_PASS || 'ADMIN2026';
+const DATA = './db.json';
 
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '10mb' }));
 
-// ═══════════════════════════════════════════════════════════
-// FIREBASE INIT
-// ═══════════════════════════════════════════════════════════
-initializeApp({
-  credential: cert({
-    projectId:   process.env.FIREBASE_PROJECT_ID,
-    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-    privateKey:  process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-  })
-});
-const db = getFirestore();
-
-// Collection references
-const C = {
-  users:    () => db.collection('users'),
-  rounds:   () => db.collection('rounds'),
-  bets:     () => db.collection('bets'),
-  coins:    () => db.collection('coinRequests'),
-  withdraw: () => db.collection('withdrawRequests'),
-  seclog:   () => db.collection('securityLog'),
-  meta:     () => db.collection('meta'),
-  settings: () => db.collection('settings'),
-  blocked:  () => db.collection('blocked'),
-};
-
-// ═══════════════════════════════════════════════════════════
-// HELPERS
-// ═══════════════════════════════════════════════════════════
-function auth(req) {
-  return req.headers['x-pass'] === ADMIN_PASS &&
-         req.headers['x-key']  === ADMIN_KEY;
+// ─── DB HELPERS ───────────────────────────────────────────
+function load() {
+  try {
+    if (fs.existsSync(DATA)) return JSON.parse(fs.readFileSync(DATA, 'utf8'));
+  } catch(e) {}
+  return {
+    users: [], rounds: [], currentRoundId: null,
+    withdrawRequests: [], coinRequests: [],
+    blockedDevices: [], blockedUTRs: [],
+    securityLog: [],
+    settings: {
+      upiId: '', upiName: 'Admin', minBet: 10, maxBet: 5000,
+      multiplier: 9, tgLink: 'https://t.me/Winx1010',
+      minWithdraw: 300, coinRate: 1,
+      maxDailyCoins: 50000  // max coins a user can buy per day
+    }
+  };
 }
+function save(d) { try { fs.writeFileSync(DATA, JSON.stringify(d, null, 2)); } catch(e) {} }
+function auth(req) { return req.headers['x-pass'] === ADMIN_PASS; }
 function uid() { return Date.now().toString(36) + Math.random().toString(36).substr(2,5).toUpperCase(); }
 function genCode() {
   const c = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -60,126 +36,47 @@ function genCode() {
   for (let i = 0; i < 8; i++) { if (i === 4) s += '-'; s += c[Math.floor(Math.random()*c.length)]; }
   return s;
 }
+function getCurrentRound(d) {
+  if (!d.currentRoundId) return null;
+  return d.rounds.find(r => r.id === d.currentRoundId) || null;
+}
+function ensureArrays(d) {
+  if (!d.withdrawRequests) d.withdrawRequests = [];
+  if (!d.coinRequests) d.coinRequests = [];
+  if (!d.blockedDevices) d.blockedDevices = [];
+  if (!d.blockedUTRs) d.blockedUTRs = [];
+  if (!d.securityLog) d.securityLog = [];
+  if (!d.settings.minWithdraw) d.settings.minWithdraw = 300;
+  if (!d.settings.coinRate) d.settings.coinRate = 1;
+  if (!d.settings.maxDailyCoins) d.settings.maxDailyCoins = 50000;
+}
+
+// ─── SECURITY LOG ─────────────────────────────────────────
+function secLog(d, type, data) {
+  if (!d.securityLog) d.securityLog = [];
+  d.securityLog.unshift({ type, data, at: Date.now() });
+  if (d.securityLog.length > 500) d.securityLog = d.securityLog.slice(0, 500);
+}
+
+// Get IP from request
 function getIP(req) {
   return req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
 }
 
-// ── SETTINGS ──────────────────────────────────────────────
-const defaultSettings = {
-  upiId:'', upiName:'Admin', minBet:10, maxBet:5000,
-  multiplier:9, tgLink:'https://t.me/Winx1010',
-  minWithdraw:300, coinRate:1, maxDailyCoins:50000
-};
-
-async function getSettings() {
+// ─── AUTO-CLOSE BETTING AT 40 MIN ─────────────────────────
+setInterval(() => {
   try {
-    const snap = await C.settings().doc('main').get();
-    return snap.exists ? { ...defaultSettings, ...snap.data() } : defaultSettings;
-  } catch(e) { console.error('getSettings:', e.message); return defaultSettings; }
-}
-async function saveSettings(data) {
-  await C.settings().doc('main').set(data, { merge: true });
-}
-
-// ── USERS ─────────────────────────────────────────────────
-async function getUser(code) {
-  try {
-    const snap = await C.users().doc(code.toUpperCase()).get();
-    return snap.exists ? { ...snap.data(), code: snap.id } : null;
-  } catch(e) { console.error('getUser:', e.message); return null; }
-}
-async function updateUser(code, data) {
-  try { await C.users().doc(code.toUpperCase()).set(data, { merge: true }); }
-  catch(e) { console.error('updateUser:', e.message); }
-}
-async function createUser(userData) {
-  const code = userData.code;
-  await C.users().doc(code).set(userData);
-}
-
-// ── ROUNDS ────────────────────────────────────────────────
-async function getCurrentRound() {
-  try {
-    const meta = await C.meta().doc('currentRound').get();
-    if (!meta.exists || !meta.data().roundId) return null;
-    const roundId = meta.data().roundId;
-    const snap = await C.rounds().doc(roundId).get();
-    return snap.exists ? { ...snap.data(), id: snap.id } : null;
-  } catch(e) { console.error('getCurrentRound:', e.message); return null; }
-}
-async function setCurrentRound(roundId) {
-  await C.meta().doc('currentRound').set({ roundId: roundId || null });
-}
-async function createRound(roundData) {
-  await C.rounds().doc(roundData.id).set(roundData);
-  await setCurrentRound(roundData.id);
-}
-async function updateRound(roundId, data) {
-  await C.rounds().doc(roundId).set(data, { merge: true });
-}
-
-// ── BETS ──────────────────────────────────────────────────
-async function getBetsByRound(roundId) {
-  try {
-    const snap = await C.bets().where('roundId','==',roundId).get();
-    return snap.docs.map(d => ({ ...d.data(), id: d.id }));
-  } catch(e) { console.error('getBetsByRound:', e.message); return []; }
-}
-async function getUserBetForRound(roundId, userCode) {
-  try {
-    const snap = await C.bets()
-      .where('roundId','==',roundId)
-      .where('userCode','==',userCode)
-      .where('status','!=','rejected')
-      .limit(1).get();
-    if (snap.empty) return null;
-    return { ...snap.docs[0].data(), id: snap.docs[0].id };
-  } catch(e) { return null; }
-}
-async function createBet(betData) {
-  await C.bets().doc(betData.id).set(betData);
-}
-async function updateBet(betId, data) {
-  await C.bets().doc(betId).set(data, { merge: true });
-}
-async function checkUTRExists(utr) {
-  try {
-    const snap = await C.bets().where('utr','==',utr).limit(1).get();
-    if (!snap.empty) return true;
-    const snap2 = await C.coins().where('utr','==',utr).limit(1).get();
-    return !snap2.empty;
-  } catch(e) { return false; }
-}
-
-// ── BLOCKED ───────────────────────────────────────────────
-async function isDeviceBlocked(deviceId) {
-  if (!deviceId) return false;
-  try {
-    const snap = await C.blocked().doc('device_'+deviceId).get();
-    return snap.exists;
-  } catch(e) { return false; }
-}
-async function isUTRBlocked(utr) {
-  try {
-    const snap = await C.blocked().doc('utr_'+utr).get();
-    return snap.exists;
-  } catch(e) { return false; }
-}
-async function blockDevice(deviceId) {
-  await C.blocked().doc('device_'+deviceId).set({ deviceId, blockedAt: Date.now(), type:'device' });
-}
-async function blockUTR(utr) {
-  await C.blocked().doc('utr_'+utr).set({ utr, blockedAt: Date.now(), type:'utr' });
-}
-
-// ── SECURITY LOG ──────────────────────────────────────────
-async function secLog(type, data) {
-  try {
-    await C.seclog().add({ type, data, at: Date.now() });
+    const d = load();
+    const round = getCurrentRound(d);
+    if (!round || round.status !== 'open') return;
+    if (Date.now() >= round.startedAt + 40*60*1000) {
+      round.status = 'closed'; round.closedAt = Date.now();
+      save(d); console.log('Auto-closed round', round.id);
+    }
   } catch(e) {}
-}
+}, 15000);
 
-// ── RATE LIMITING (in-memory, ok on restart) ───────────────
+// ─── RATE LIMITING (in-memory) ────────────────────────────
 const rateLimiter = {};
 function checkRate(key, limit, windowMs) {
   const now = Date.now();
@@ -190,749 +87,578 @@ function checkRate(key, limit, windowMs) {
   return true;
 }
 
-// ═══════════════════════════════════════════════════════════
-// DATA MIGRATION (run once — migrates old single-doc to collections)
-// Call GET /admin/migrate with admin password to trigger
-// ═══════════════════════════════════════════════════════════
-app.post('/admin/migrate', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok: false });
-  try {
-    const oldDoc = await db.collection('numbet').doc('data').get();
-    if (!oldDoc.exists) return res.json({ ok: true, msg: 'No old data found — nothing to migrate' });
-    const old = oldDoc.data();
-    let migrated = { users:0, rounds:0, bets:0, coins:0, withdraws:0 };
-    const batch1 = db.batch();
-
-    // Migrate settings
-    if (old.settings) {
-      batch1.set(C.settings().doc('main'), old.settings);
-    }
-    // Migrate meta
-    if (old.currentRoundId) {
-      batch1.set(C.meta().doc('currentRound'), { roundId: old.currentRoundId });
-    }
-    await batch1.commit();
-
-    // Migrate users (batch of 500)
-    const users = old.users || [];
-    for (let i = 0; i < users.length; i += 400) {
-      const b = db.batch();
-      users.slice(i, i+400).forEach(u => {
-        b.set(C.users().doc(u.code), u);
-        migrated.users++;
-      });
-      await b.commit();
-    }
-
-    // Migrate rounds + bets
-    const rounds = old.rounds || [];
-    for (let i = 0; i < rounds.length; i += 50) {
-      const b = db.batch();
-      rounds.slice(i, i+50).forEach(r => {
-        const bets = r.bets || [];
-        const roundData = { ...r, bets: undefined };
-        delete roundData.bets;
-        b.set(C.rounds().doc(r.id), roundData);
-        migrated.rounds++;
-        bets.forEach(bet => {
-          b.set(C.bets().doc(bet.id), { ...bet, roundId: r.id });
-          migrated.bets++;
-        });
-      });
-      await b.commit();
-    }
-
-    // Migrate coin requests
-    const coins = old.coinRequests || [];
-    for (let i = 0; i < coins.length; i += 400) {
-      const b = db.batch();
-      coins.slice(i, i+400).forEach(c => { b.set(C.coins().doc(c.id), c); migrated.coins++; });
-      await b.commit();
-    }
-
-    // Migrate withdraw requests
-    const wds = old.withdrawRequests || [];
-    for (let i = 0; i < wds.length; i += 400) {
-      const b = db.batch();
-      wds.slice(i, i+400).forEach(w => { b.set(C.withdraw().doc(w.id), w); migrated.withdraws++; });
-      await b.commit();
-    }
-
-    // Migrate blocked devices/UTRs
-    const blockedBatch = db.batch();
-    (old.blockedDevices||[]).forEach(d => {
-      blockedBatch.set(C.blocked().doc('device_'+d), { deviceId:d, type:'device', blockedAt:Date.now() });
-    });
-    (old.blockedUTRs||[]).forEach(u => {
-      blockedBatch.set(C.blocked().doc('utr_'+u), { utr:u, type:'utr', blockedAt:Date.now() });
-    });
-    await blockedBatch.commit();
-
-    console.log('Migration done:', migrated);
-    res.json({ ok: true, msg: 'Migration complete! Old data still in numbet/data as backup.', migrated });
-  } catch(e) {
-    console.error('Migration error:', e);
-    res.json({ ok: false, msg: e.message });
-  }
-});
-
-// ═══════════════════════════════════════════════════════════
-// AUTO-CLOSE BETTING AT 40 MIN
-// ═══════════════════════════════════════════════════════════
-setInterval(async () => {
-  try {
-    const round = await getCurrentRound();
-    if (!round || round.status !== 'open') return;
-    if (Date.now() >= round.startedAt + 40*60*1000) {
-      await updateRound(round.id, { status:'closed', closedAt:Date.now() });
-      console.log('Auto-closed round', round.id);
-    }
-  } catch(e) {}
-}, 15000);
-
-// ═══════════════════════════════════════════════════════════
-// PUBLIC APIs
-// ═══════════════════════════════════════════════════════════
-
-app.get('/', (req, res) => res.json({ status:'NUMBET OK', db:'Firebase Multi-Collection', version:'5.0' }));
-
-// ── LOGIN ─────────────────────────────────────────────────
-app.post('/login', async (req, res) => {
+// ─── LOGIN ────────────────────────────────────────────────
+app.post('/login', (req, res) => {
   const { code, deviceId } = req.body;
   const ip = getIP(req);
-  if (!code) return res.json({ ok:false, msg:'Code daalo' });
-  const cleanCode = code.trim().toUpperCase();
+  if (!code) return res.json({ ok: false, msg: 'Code daalo' });
+  const d = load(); ensureArrays(d);
 
+  // Rate limit: 10 login attempts per IP per minute
   if (!checkRate('login:'+ip, 10, 60000)) {
-    await secLog('RATE_LIMIT', { ip, code: cleanCode, action:'login' });
-    return res.json({ ok:false, msg:'Bahut zyada attempts. 1 minute baad try karo.' });
+    secLog(d, 'RATE_LIMIT', { ip, code: code.toUpperCase(), action: 'login' });
+    save(d);
+    return res.json({ ok: false, msg: 'Bahut zyada attempts. 1 minute baad try karo.' });
   }
 
-  const [user, settings] = await Promise.all([getUser(cleanCode), getSettings()]);
-
+  const user = d.users.find(u => u.code === code.trim().toUpperCase());
   if (!user) {
-    await secLog('LOGIN_FAIL', { ip, code: cleanCode });
-    return res.json({ ok:false, msg:'Galat code — Telegram se lo: @Winx1010' });
+    secLog(d, 'LOGIN_FAIL', { ip, code: code.trim().toUpperCase() });
+    save(d);
+    return res.json({ ok: false, msg: 'Galat code — Telegram se lo: @Winx1010' });
   }
 
-  if (deviceId && await isDeviceBlocked(deviceId)) {
-    await secLog('BLOCKED_DEVICE_LOGIN', { ip, code: cleanCode, deviceId });
-    return res.json({ ok:false, msg:'Yeh device block hai. Admin se contact karo.' });
+  // Check blocked device
+  if (deviceId && d.blockedDevices.includes(deviceId)) {
+    secLog(d, 'BLOCKED_DEVICE_LOGIN', { ip, code: user.code, deviceId });
+    save(d);
+    return res.json({ ok: false, msg: 'Yeh device block hai. Admin se contact karo.' });
   }
 
+  // Check if user is banned
   if (user.banned) {
-    await secLog('BANNED_USER_LOGIN', { ip, code: cleanCode });
-    return res.json({ ok:false, msg:'Aapka account block hai. Admin se contact karo.' });
+    secLog(d, 'BANNED_USER_LOGIN', { ip, code: user.code });
+    save(d);
+    return res.json({ ok: false, msg: 'Aapka account suspend hai. Admin se contact karo.' });
   }
 
-  const updates = { lastLoginAt: Date.now(), lastLoginIP: ip };
   if (!user.deviceId && deviceId) {
-    updates.deviceId = deviceId;
-    updates.firstLoginAt = user.firstLoginAt || Date.now();
+    user.deviceId = deviceId;
+    user.firstLoginAt = user.firstLoginAt || Date.now();
+    user.lastLoginAt = Date.now();
+    user.lastLoginIP = ip;
+    save(d);
   } else if (user.deviceId && deviceId && user.deviceId !== deviceId) {
-    await secLog('DEVICE_MISMATCH', { ip, code: cleanCode, oldDevice: user.deviceId, newDevice: deviceId });
-    return res.json({ ok:false, msg:'Yeh code doosre phone pe use ho chuka hai. Admin se contact karo.' });
+    secLog(d, 'DEVICE_MISMATCH', { ip, code: user.code, savedDevice: user.deviceId, newDevice: deviceId });
+    save(d);
+    return res.json({ ok: false, msg: 'Yeh code doosre phone pe use ho chuka hai' });
+  } else {
+    user.lastLoginAt = Date.now();
+    user.lastLoginIP = ip;
+    save(d);
   }
-  if (user.coins === undefined) updates.coins = 0;
-  await updateUser(cleanCode, updates);
 
-  return res.json({ ok:true, user:{ code:user.code, name:user.name, coins:user.coins||0 }, settings });
+  if (user.coins === undefined) user.coins = 0;
+  return res.json({ ok: true, user: { code: user.code, name: user.name, coins: user.coins||0 }, settings: d.settings });
 });
 
-// ── VERIFY (auto-login) ───────────────────────────────────
-app.post('/verify', async (req, res) => {
+app.post('/verify', (req, res) => {
   const { code } = req.body;
-  if (!code) return res.json({ ok:false });
-  const cleanCode = code.trim().toUpperCase();
-  const [user, settings] = await Promise.all([getUser(cleanCode), getSettings()]);
-  if (!user || user.banned) return res.json({ ok:false, msg:'Session expire — dobara login karo' });
-  if (user.coins === undefined) await updateUser(cleanCode, { coins:0 });
-  return res.json({ ok:true, user:{ code:user.code, name:user.name, coins:user.coins||0 }, settings });
+  if (!code) return res.json({ ok: false });
+  const d = load(); ensureArrays(d);
+  const user = d.users.find(u => u.code === code.trim().toUpperCase());
+  if (!user || user.banned) return res.json({ ok: false, msg: 'Session expire — dobara login karo' });
+  if (user.coins === undefined) { user.coins = 0; save(d); }
+  return res.json({ ok: true, user: { code: user.code, name: user.name, coins: user.coins||0 }, settings: d.settings });
 });
 
-// ── ROUND INFO ────────────────────────────────────────────
-app.get('/round', async (req, res) => {
-  const [round, settings] = await Promise.all([getCurrentRound(), getSettings()]);
-  if (!round) return res.json({ ok:true, round:null, settings });
-  return res.json({ ok:true, settings, round:{
-    id:round.id, status:round.status, startedAt:round.startedAt,
-    betEndsAt:round.startedAt+40*60*1000, roundEndsAt:round.startedAt+60*60*1000,
-    winNum:round.status==='result'?round.winNum:null
-  }});
-});
-
-// ── MY BET STATUS ─────────────────────────────────────────
-app.post('/mybetStatus', async (req, res) => {
-  const { code } = req.body;
-  if (!code) return res.json({ ok:false });
-  const cleanCode = code.trim().toUpperCase();
-
-  const [currentRound, settings] = await Promise.all([getCurrentRound(), getSettings()]);
-  const user = await getUser(cleanCode);
-  const coins = user ? (user.coins||0) : 0;
-
-  let round = currentRound;
-  let bet = null;
-
-  if (currentRound) {
-    bet = await getUserBetForRound(currentRound.id, cleanCode);
-  }
-
-  // If no current round, show last result round
-  if (!currentRound) {
-    try {
-      const lastSnap = await C.rounds()
-        .where('status','==','result')
-        .orderBy('resultAt','desc')
-        .limit(1).get();
-      if (!lastSnap.empty) {
-        const lastRound = { ...lastSnap.docs[0].data(), id: lastSnap.docs[0].id };
-        round = lastRound;
-        const betSnap = await C.bets()
-          .where('roundId','==',lastRound.id)
-          .where('userCode','==',cleanCode)
-          .limit(1).get();
-        if (!betSnap.empty) bet = { ...betSnap.docs[0].data(), id: betSnap.docs[0].id };
-      }
-    } catch(e) {}
-  }
-
-  if (!round) return res.json({ ok:true, bet:null, round:null, settings, coins });
-
-  const activeRound = currentRound || round;
-  const betBelongsToCurrent = bet && round && activeRound && round.id === activeRound.id;
-
-  const ri = {
-    id:activeRound.id, status:activeRound.status, startedAt:activeRound.startedAt,
-    betEndsAt:activeRound.startedAt+40*60*1000, roundEndsAt:activeRound.startedAt+60*60*1000,
-    winNum:activeRound.status==='result'?activeRound.winNum:null
+// ─── ROUND INFO (PUBLIC) ─────────────────────────────────
+app.get('/round', (req, res) => {
+  const d = load();
+  const round = getCurrentRound(d);
+  if (!round) return res.json({ ok: true, round: null, settings: d.settings });
+  const info = {
+    id: round.id, status: round.status, startedAt: round.startedAt,
+    betEndsAt: round.startedAt+40*60*1000, roundEndsAt: round.startedAt+60*60*1000,
+    winNum: round.status==='result' ? round.winNum : null
   };
-  return res.json({ ok:true, bet: betBelongsToCurrent ? bet : null, round:ri, settings, coins });
+  return res.json({ ok: true, round: info, settings: d.settings });
 });
 
-// ── MY HISTORY ────────────────────────────────────────────
-app.post('/myhistory', async (req, res) => {
+// ─── MY BET STATUS ───────────────────────────────────────
+app.post('/mybetStatus', (req, res) => {
   const { code } = req.body;
-  if (!code) return res.json({ ok:false });
+  if (!code) return res.json({ ok: false });
+  const d = load(); ensureArrays(d);
   const cleanCode = code.trim().toUpperCase();
-  try {
-    const snap = await C.bets()
-      .where('userCode','==',cleanCode)
-      .where('status','in',['approved','pending'])
-      .orderBy('placedAt','desc')
-      .limit(50).get();
-    const bets = snap.docs.map(d => ({ ...d.data(), id: d.id }));
-
-    // Get round details for each bet
-    const roundIds = [...new Set(bets.map(b => b.roundId))];
-    const rounds = {};
-    await Promise.all(roundIds.map(async rid => {
-      const rs = await C.rounds().doc(rid).get();
-      if (rs.exists) rounds[rid] = rs.data();
-    }));
-
-    const history = bets
-      .filter(b => b.status !== 'rejected')
-      .map(b => {
-        const r = rounds[b.roundId] || {};
-        return { roundId:b.roundId, resultAt:r.resultAt||null, winNum:r.winNum||null, myNumber:b.number, myAmount:b.amount, won:b.won, winAmount:b.winAmount||0, status:b.status };
-      });
-    return res.json({ ok:true, history });
-  } catch(e) {
-    console.error('myhistory:', e.message);
-    return res.json({ ok:true, history:[] });
-  }
+  const user = d.users.find(u => u.code === cleanCode);
+  let round = getCurrentRound(d);
+  if (!round) { const done = d.rounds.filter(r=>r.status==='result'); round = done.length ? done[done.length-1] : null; }
+  if (!round) return res.json({ ok: true, bet: null, round: null, settings: d.settings, coins: user ? (user.coins||0) : 0 });
+  const bet = (round.bets||[]).find(b => b.userCode === cleanCode);
+  const ri = { id:round.id, status:round.status, startedAt:round.startedAt, betEndsAt:round.startedAt+40*60*1000, roundEndsAt:round.startedAt+60*60*1000, winNum:round.status==='result'?round.winNum:null };
+  return res.json({ ok: true, bet: bet||null, round: ri, settings: d.settings, coins: user ? (user.coins||0) : 0 });
 });
 
-// ── PLACE BET (coin-based — coins cut instantly) ──────────
-app.post('/bet', async (req, res) => {
+// ─── MY HISTORY ──────────────────────────────────────────
+app.post('/myhistory', (req, res) => {
+  const { code } = req.body;
+  if (!code) return res.json({ ok: false });
+  const d = load();
+  const cleanCode = code.trim().toUpperCase();
+  const history = d.rounds
+    .filter(r => r.status === 'result')
+    .map(r => {
+      const bet = (r.bets||[]).find(b => b.userCode === cleanCode);
+      if (!bet || bet.status === 'rejected') return null;
+      return { roundId:r.id, resultAt:r.resultAt, winNum:r.winNum, myNumber:bet.number, myAmount:bet.amount, won:bet.won, winAmount:bet.winAmount||0, status:bet.status };
+    })
+    .filter(Boolean).reverse().slice(0, 50);
+  return res.json({ ok: true, history });
+});
+
+// ─── PLACE BET ───────────────────────────────────────────
+app.post('/bet', (req, res) => {
   const { code, number, amount } = req.body;
   const ip = getIP(req);
-  if (!code || number === undefined || !amount)
-    return res.json({ ok:false, msg:'Saari details daalo' });
-
-  if (!checkRate('bet:'+ip, 5, 60000))
-    return res.json({ ok:false, msg:'Bahut zyada attempts. Thodi der baad try karo.' });
-
+  if (!code || number === undefined || !amount) return res.json({ ok: false, msg: 'Saari details daalo' });
+  const d = load(); ensureArrays(d);
   const cleanCode = code.trim().toUpperCase();
+  const user = d.users.find(u => u.code === cleanCode);
+  if (!user || user.banned) return res.json({ ok: false, msg: 'Invalid code' });
+  const round = getCurrentRound(d);
+  if (!round) return res.json({ ok: false, msg: 'Koi round nahi chala abhi' });
+  if (round.status !== 'open') return res.json({ ok: false, msg: 'Betting band ho gayi' });
   const num = parseInt(number);
-  if (isNaN(num) || num < 0 || num > 9)
-    return res.json({ ok:false, msg:'Number 0-9 ke beech hona chahiye' });
-
-  const [user, round, settings] = await Promise.all([
-    getUser(cleanCode), getCurrentRound(), getSettings()
-  ]);
-
-  if (!user) return res.json({ ok:false, msg:'Invalid code' });
-  if (user.banned) return res.json({ ok:false, msg:'Account block hai. Admin se contact karo.' });
-  if (!round) return res.json({ ok:false, msg:'Koi round nahi chala abhi' });
-  if (round.status !== 'open') return res.json({ ok:false, msg:'Betting band ho gayi' });
-
+  if (isNaN(num)||num<0||num>9) return res.json({ ok: false, msg: 'Number 0-9 ke beech hona chahiye' });
   const amt = parseInt(amount);
-  if (isNaN(amt) || amt < settings.minBet || amt > settings.maxBet)
-    return res.json({ ok:false, msg:`Coins ${settings.minBet}–${settings.maxBet} ke beech hone chahiye` });
-
-  if ((user.coins || 0) < amt)
-    return res.json({ ok:false, msg:'Coins kam hain — pehle coins kharido' });
-
-  const existing = await getUserBetForRound(round.id, cleanCode);
-  if (existing) return res.json({ ok:false, msg:'Aapki bet pehle se hai is round mein' });
-
-  // Coins instantly deduct karo
-  await updateUser(cleanCode, { coins: FieldValue.increment(-amt) });
-  const newCoins = (user.coins || 0) - amt;
-
-  const bet = {
-    id: uid(), roundId: round.id, userCode: cleanCode, userName: user.name,
-    number: num, amount: amt,
-    status: 'approved', placedAt: Date.now(), won: null, winAmount: null
-  };
-  await createBet(bet);
-  await secLog('BET_PLACED', { code: cleanCode, amount: amt, number: num, roundId: round.id, ip });
-
-  return res.json({ ok:true, coins: newCoins, bet:{ id:bet.id, number:num, amount:amt, status:'approved' } });
+  if (isNaN(amt)||amt<d.settings.minBet||amt>d.settings.maxBet) return res.json({ ok: false, msg: `Amount ${d.settings.minBet}-${d.settings.maxBet} coins ke beech hona chahiye` });
+  if ((user.coins||0) < amt) return res.json({ ok: false, msg: `Aapke paas sirf ${user.coins||0} coins hain. Pehle coins kharido.` });
+  const existing = (round.bets||[]).find(b => b.userCode===cleanCode && b.status!=='rejected');
+  if (existing) return res.json({ ok: false, msg: 'Aapki bet pehle se hai is round mein' });
+  user.coins = (user.coins||0) - amt;
+  if (!round.bets) round.bets = [];
+  const bet = { id:uid(), userCode:cleanCode, userName:user.name, number:num, amount:amt, status:'approved', placedAt:Date.now(), ip, won:null, winAmount:null };
+  round.bets.push(bet);
+  save(d);
+  return res.json({ ok: true, bet: { id:bet.id, number:num, amount:amt, status:'approved' }, coins: user.coins });
 });
 
-// ── WITHDRAW REQUEST (coins deducted immediately) ──────────
-app.post('/withdraw', async (req, res) => {
-  // user.html sends: coins + upiId
-  const { code, coins: reqCoins, upiId, amount, upi } = req.body;
-  const withdrawAmt = parseInt(reqCoins || amount);
-  const upiAddr = (upiId || upi || '').trim();
-  if (!code || !withdrawAmt || !upiAddr)
-    return res.json({ ok:false, msg:'Saari details daalo' });
+// ─── COIN PURCHASE REQUEST ────────────────────────────────
+app.post('/coins/buy', (req, res) => {
+  const { code, utr, amount } = req.body;
+  const ip = getIP(req);
+  if (!code||!utr||!amount) return res.json({ ok: false, msg: 'Saari details daalo' });
+  const d = load(); ensureArrays(d);
   const cleanCode = code.trim().toUpperCase();
-  const [user, settings] = await Promise.all([getUser(cleanCode), getSettings()]);
-  if (!user) return res.json({ ok:false, msg:'Invalid code' });
-  if (user.banned) return res.json({ ok:false, msg:'Account block hai' });
-  if (isNaN(withdrawAmt) || withdrawAmt < settings.minWithdraw)
-    return res.json({ ok:false, msg:`Min ${settings.minWithdraw} coins withdraw karo` });
-  if ((user.coins || 0) < withdrawAmt)
-    return res.json({ ok:false, msg:'Itne coins nahi hain' });
-  const pendingSnap = await C.withdraw().where('userCode','==',cleanCode).where('status','==','pending').limit(1).get();
-  if (!pendingSnap.empty) return res.json({ ok:false, msg:'Aapki ek request already pending hai' });
-  // Coins instantly deduct karo
-  await updateUser(cleanCode, { coins: FieldValue.increment(-withdrawAmt) });
-  const newCoins = (user.coins || 0) - withdrawAmt;
-  const wr = {
-    id: uid(), userCode: user.code, userName: user.name,
-    coins: withdrawAmt, upiId: upiAddr,
-    status: 'pending', requestedAt: Date.now(), createdAt: Date.now()
-  };
-  await C.withdraw().doc(wr.id).set(wr);
-  await secLog('WITHDRAW_REQUEST', { code: cleanCode, coins: withdrawAmt, upiId: upiAddr });
-  return res.json({ ok:true, coins: newCoins });
-});
+  const user = d.users.find(u => u.code === cleanCode);
+  if (!user || user.banned) return res.json({ ok: false, msg: 'Invalid code' });
 
-// ── COIN BUY REQUEST ──────────────────────────────────────
-app.post('/coins/buy', async (req, res) => {
-  const { code, amount, utr } = req.body;
-  if (!code||!amount||!utr) return res.json({ ok:false, msg:'Saari details daalo' });
-  const cleanCode = code.trim().toUpperCase();
-  const [user, settings] = await Promise.all([getUser(cleanCode), getSettings()]);
-  if (!user) return res.json({ ok:false, msg:'Invalid code' });
-  const amt = parseInt(amount);
-  if (isNaN(amt)||amt<10) return res.json({ ok:false, msg:'Min ₹10 se coins lo' });
-  const cleanUTR = utr.toString().trim().replace(/\s/g,'');
-  if (await checkUTRExists(cleanUTR)) return res.json({ ok:false, msg:'Yeh UTR pehle use ho chuka hai' });
-  const coins = Math.floor(amt * (settings.coinRate||1));
-  const cr = { id:uid(), userCode:user.code, userName:user.name, amount:amt, utr:cleanUTR, coins, status:'pending', requestedAt:Date.now(), createdAt:Date.now() };
-  await C.coins().doc(cr.id).set(cr);
-  return res.json({ ok:true, coinsWillGet:coins });
-});
-
-// ═══════════════════════════════════════════════════════════
-// ADMIN APIs
-// ═══════════════════════════════════════════════════════════
-
-// ── ADMIN DATA ────────────────────────────────────────────
-app.get('/admin/data', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
-  try {
-    const [round, settings, userCount, pendingCoinsSnap, pendingWdSnap] = await Promise.all([
-      getCurrentRound(),
-      getSettings(),
-      C.users().count().get(),
-      C.coins().where('status','==','pending').count().get(),
-      C.withdraw().where('status','==','pending').count().get(),
-    ]);
-
-    let bets = [];
-    let numStats = null;
-    let currentBets = 0, currentAmount = 0;
-
-    if (round) {
-      bets = await getBetsByRound(round.id);
-      numStats = {};
-      for (let i=0;i<=9;i++) numStats[i]={count:0,total:0,bets:[]};
-      bets.filter(b=>b.status==='approved').forEach(b=>{
-        numStats[b.number].count++;
-        numStats[b.number].total+=b.amount;
-        numStats[b.number].bets.push({name:b.userName,code:b.userCode,amount:b.amount});
-        currentBets++;
-        currentAmount+=b.amount;
-      });
-    }
-
-    // Get recent users (limit 100 for admin panel)
-    const usersSnap = await C.users().orderBy('createdAt','desc').limit(100).get();
-    const users = usersSnap.docs.map(d => ({ ...d.data(), code: d.id }));
-
-    const totalRoundsSnap = await C.rounds().where('status','==','result').count().get();
-
-    const ri = round ? {
-      ...round,
-      bets,
-      betEndsAt:round.startedAt+40*60*1000,
-      roundEndsAt:round.startedAt+60*60*1000
-    } : null;
-
-    return res.json({
-      ok:true, users, round:ri, numStats, settings,
-      pendingCoins: pendingCoinsSnap.data().count,
-      pendingWithdraw: pendingWdSnap.data().count,
-      stats:{
-        totalUsers: userCount.data().count,
-        totalRounds: totalRoundsSnap.data().count,
-        currentBets, currentAmount,
-      }
-    });
-  } catch(e) {
-    console.error('/admin/data:', e.message);
-    return res.status(500).json({ ok:false, msg:e.message });
+  // Rate limit: 5 coin requests per hour per user
+  if (!checkRate('coinbuy:'+cleanCode, 5, 3600000)) {
+    secLog(d, 'RATE_LIMIT', { ip, code: cleanCode, action: 'coins/buy' });
+    save(d);
+    return res.json({ ok: false, msg: 'Bahut zyada requests. 1 ghante mein max 5 requests.' });
   }
+
+  const cleanUTR = utr.toString().trim().replace(/\s/g,'');
+  if (!/^\d{6,20}$/.test(cleanUTR)) return res.json({ ok: false, msg: 'UTR sirf numbers (6-20 digit)' });
+
+  // Block if UTR is in blockedUTRs
+  if (d.blockedUTRs.includes(cleanUTR)) {
+    secLog(d, 'BLOCKED_UTR_ATTEMPT', { ip, code: cleanCode, utr: cleanUTR });
+    save(d);
+    return res.json({ ok: false, msg: 'Yeh UTR permanently block hai.' });
+  }
+
+  // Check duplicate UTR across all coin requests
+  const allUTRs = d.coinRequests.map(r=>r.utr);
+  if (allUTRs.includes(cleanUTR)) {
+    secLog(d, 'DUPLICATE_UTR', { ip, code: cleanCode, utr: cleanUTR });
+    save(d);
+    return res.json({ ok: false, msg: 'Yeh UTR pehle use ho chuka hai' });
+  }
+
+  const amt = parseInt(amount);
+  if (isNaN(amt)||amt<10) return res.json({ ok: false, msg: 'Minimum ₹10 ka coin kharido' });
+
+  // Daily limit check
+  const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+  const todayCoins = d.coinRequests
+    .filter(r => r.userCode===cleanCode && r.status==='approved' && r.createdAt >= todayStart.getTime())
+    .reduce((s,r) => s+r.coins, 0);
+  const maxDaily = d.settings.maxDailyCoins || 50000;
+  const coinsToAdd = Math.floor(amt*(d.settings.coinRate||1));
+  if (todayCoins + coinsToAdd > maxDaily) {
+    secLog(d, 'DAILY_LIMIT', { ip, code: cleanCode, attempted: coinsToAdd, todayTotal: todayCoins });
+    save(d);
+    return res.json({ ok: false, msg: `Aaj ki daily limit ${maxDaily} coins hai. Kal try karo.` });
+  }
+
+  const req_obj = {
+    id: uid(), userCode: cleanCode, userName: user.name,
+    utr: cleanUTR, amount: amt, coins: coinsToAdd,
+    status: 'pending', createdAt: Date.now(), ip
+  };
+  d.coinRequests.push(req_obj);
+  secLog(d, 'COIN_REQUEST', { ip, code: cleanCode, utr: cleanUTR, amount: amt, coins: coinsToAdd });
+  save(d);
+  return res.json({ ok: true, msg: 'Request bhej di! Admin approve karega jald.' });
 });
 
-// ── ROUND CONTROLS ────────────────────────────────────────
-app.post('/admin/round/start', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
-  const existing = await getCurrentRound();
-  if (existing) return res.json({ ok:false, msg:'Pehle current round finish karo' });
-  const round = { id:uid(), status:'open', startedAt:Date.now(), closedAt:null, resultAt:null, winNum:null };
-  await createRound(round);
-  res.json({ ok:true, round });
+// ─── WITHDRAW REQUEST ─────────────────────────────────────
+app.post('/withdraw', (req, res) => {
+  const { code, coins, upiId } = req.body;
+  const ip = getIP(req);
+  if (!code||!coins||!upiId) return res.json({ ok: false, msg: 'Saari details daalo' });
+  const d = load(); ensureArrays(d);
+  const cleanCode = code.trim().toUpperCase();
+  const user = d.users.find(u => u.code === cleanCode);
+  if (!user || user.banned) return res.json({ ok: false, msg: 'Invalid code' });
+
+  // Rate limit: 3 withdraw requests per hour
+  if (!checkRate('withdraw:'+cleanCode, 3, 3600000)) {
+    secLog(d, 'RATE_LIMIT', { ip, code: cleanCode, action: 'withdraw' });
+    save(d);
+    return res.json({ ok: false, msg: 'Bahut zyada withdraw requests. 1 ghante mein max 3.' });
+  }
+
+  const c = parseInt(coins);
+  const minW = d.settings.minWithdraw || 300;
+  if (isNaN(c)||c<minW) return res.json({ ok: false, msg: `Minimum ${minW} coins withdraw kar sakte ho` });
+  if ((user.coins||0) < c) return res.json({ ok: false, msg: `Aapke paas sirf ${user.coins||0} coins hain` });
+
+  // Fraud check: total withdrawn vs total bought
+  const totalBought = d.coinRequests.filter(r=>r.userCode===cleanCode&&r.status==='approved').reduce((s,r)=>s+r.coins,0);
+  const totalWon = d.rounds.flatMap(r=>r.bets||[]).filter(b=>b.userCode===cleanCode&&b.won).reduce((s,b)=>s+(b.winAmount||0),0);
+  const totalWithdrawn = d.withdrawRequests.filter(r=>r.userCode===cleanCode&&r.status==='paid').reduce((s,r)=>s+r.coins,0);
+  const maxCanWithdraw = totalBought + totalWon - totalWithdrawn;
+  if (c > maxCanWithdraw + 1) {
+    secLog(d, 'WITHDRAW_FRAUD_ATTEMPT', { ip, code: cleanCode, attempted: c, maxAllowed: maxCanWithdraw, bought: totalBought, won: totalWon, withdrawn: totalWithdrawn });
+    save(d);
+    return res.json({ ok: false, msg: 'Invalid withdraw amount. Admin se contact karo.' });
+  }
+
+  const cleanUpi = upiId.toString().trim();
+  if (!cleanUpi) return res.json({ ok: false, msg: 'UPI ID daalo' });
+  user.coins = (user.coins||0) - c;
+  const req_obj = { id:uid(), userCode:cleanCode, userName:user.name, coins:c, upiId:cleanUpi, status:'pending', createdAt:Date.now(), ip };
+  d.withdrawRequests.push(req_obj);
+  secLog(d, 'WITHDRAW_REQUEST', { ip, code: cleanCode, coins: c, upiId: cleanUpi });
+  save(d);
+  return res.json({ ok: true, msg: `${c} coins withdraw request bhej di! Admin jald process karega.`, coins: user.coins });
 });
 
-app.post('/admin/round/close', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
-  const round = await getCurrentRound();
-  if (!round||round.status!=='open') return res.json({ ok:false, msg:'Koi open round nahi' });
-  await updateRound(round.id, { status:'closed', closedAt:Date.now() });
-  res.json({ ok:true });
-});
-
-app.post('/admin/round/result', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
-  const { winNum } = req.body;
-  const num = parseInt(winNum);
-  if (isNaN(num)||num<0||num>9) return res.json({ ok:false, msg:'0-9 mein se number daalo' });
-
-  const [round, settings] = await Promise.all([getCurrentRound(), getSettings()]);
-  if (!round||round.status==='result') return res.json({ ok:false, msg:'Round result ke liye ready nahi' });
-
-  const mult = settings.multiplier||9;
-  const bets = await getBetsByRound(round.id);
-  const winners = [];
-
-  // Update all bets and winner coins in parallel
-  await Promise.all(bets.map(async b => {
-    if (b.status === 'approved') {
-      const won = b.number === num;
-      const winAmount = won ? b.amount * mult : 0;
-      await updateBet(b.id, { won, winAmount });
-      if (won) {
-        await updateUser(b.userCode, { coins: FieldValue.increment(winAmount) });
-        winners.push({ name:b.userName, code:b.userCode, coins:winAmount });
-      }
-    }
-  }));
-
-  await updateRound(round.id, { status:'result', winNum:num, resultAt:Date.now() });
-  await setCurrentRound(null);
-
-  res.json({ ok:true, winNum:num, winners });
-});
-
-// ── BET VERIFY / PAID ─────────────────────────────────────
-app.post('/admin/bet/verify', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
-  const { betId, action } = req.body;
-  try {
-    const status = action==='approve' ? 'approved' : 'rejected';
-    await updateBet(betId, { status, verifiedAt:Date.now() });
-    return res.json({ ok:true, status });
-  } catch(e) { return res.json({ ok:false, msg:'Bet nahi mili' }); }
-});
-
-app.post('/admin/bet/paid', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
-  const { betId } = req.body;
-  try {
-    await updateBet(betId, { paid:true, paidAt:Date.now() });
-    return res.json({ ok:true });
-  } catch(e) { return res.json({ ok:false }); }
-});
-
-// ── COIN REQUESTS ─────────────────────────────────────────
-app.get('/admin/coins', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
-  const snap = await C.coins().orderBy('createdAt','desc').limit(100).get();
-  res.json({ ok:true, requests: snap.docs.map(d=>({...d.data(),id:d.id})) });
-});
-
-app.post('/admin/coins/approve', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
-  const { reqId } = req.body;
-  const snap = await C.coins().doc(reqId).get();
-  if (!snap.exists) return res.json({ ok:false, msg:'Request nahi mili' });
-  const cr = snap.data();
-  if (cr.status !== 'pending') return res.json({ ok:false, msg:'Already processed' });
-  await C.coins().doc(reqId).update({ status:'approved', actionAt:Date.now() });
-  await updateUser(cr.userCode, { coins: FieldValue.increment(cr.coins) });
-  res.json({ ok:true });
-});
-
-app.post('/admin/coins/reject', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
-  const { reqId, blockUTR: shouldBlock } = req.body;
-  const snap = await C.coins().doc(reqId).get();
-  if (!snap.exists) return res.json({ ok:false, msg:'Request nahi mili' });
-  const cr = snap.data();
-  await C.coins().doc(reqId).update({ status:'rejected', actionAt:Date.now() });
-  if (shouldBlock && cr.utr) await blockUTR(cr.utr);
-  res.json({ ok:true });
-});
-
-app.post('/admin/coins/action', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
-  const { id, action } = req.body;
-  const snap = await C.coins().doc(id).get();
-  if (!snap.exists) return res.json({ ok:false, msg:'Request nahi mili' });
-  const cr = snap.data();
-  await C.coins().doc(id).update({ status:action==='approve'?'approved':'rejected', actionAt:Date.now() });
-  if (action === 'approve') await updateUser(cr.userCode, { coins: FieldValue.increment(cr.coins) });
-  res.json({ ok:true });
-});
-
-// ── WITHDRAW REQUESTS ─────────────────────────────────────
-app.get('/admin/withdraw', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
-  const snap = await C.withdraw().orderBy('requestedAt','desc').limit(100).get();
-  res.json({ ok:true, requests: snap.docs.map(d=>({...d.data(),id:d.id})) });
-});
-
-app.post('/admin/withdraw/done', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
-  const { reqId } = req.body;
-  await C.withdraw().doc(reqId).update({ status:'paid', paidAt:Date.now() });
-  res.json({ ok:true });
-});
-
-app.post('/admin/withdraw/reject', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
-  const { reqId } = req.body;
-  const snap = await C.withdraw().doc(reqId).get();
-  if (!snap.exists) return res.json({ ok:false, msg:'Request nahi mili' });
-  const wr = snap.data();
-  await C.withdraw().doc(reqId).update({ status:'rejected', processedAt:Date.now() });
-  if (wr.coins) await updateUser(wr.userCode, { coins: FieldValue.increment(wr.coins) });
-  res.json({ ok:true });
-});
-
-app.post('/admin/withdraw/action', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
-  const { id, action } = req.body;
-  await C.withdraw().doc(id).update({ status:action==='approve'?'approved':'rejected', actionAt:Date.now() });
-  res.json({ ok:true });
-});
-
-// ── USER MANAGEMENT ───────────────────────────────────────
-app.post('/admin/user', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
-  const { name } = req.body;
-  const code = genCode();
-  await createUser({ code, name:name||'User', createdAt:Date.now(), deviceId:null, coins:0, banned:false });
-  res.json({ ok:true, code, name:name||'User' });
-});
-
-app.delete('/admin/user/:code', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
-  await C.users().doc(req.params.code.toUpperCase()).delete();
-  res.json({ ok:true });
-});
-
-app.post('/admin/user/resetdevice', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
-  const { code } = req.body;
-  const user = await getUser(code);
-  if (!user) return res.json({ ok:false, msg:'User nahi mila' });
-  await updateUser(code, { deviceId:null });
-  res.json({ ok:true });
-});
-
-app.post('/admin/user/coins', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
-  const { code, coins } = req.body;
-  const user = await getUser(code);
-  if (!user) return res.json({ ok:false, msg:'User nahi mila' });
-  const newCoins = Math.max(0, parseInt(coins)||0);
-  await updateUser(code, { coins:newCoins });
-  res.json({ ok:true, coins:newCoins });
-});
-
-app.post('/admin/user/ban', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
-  const { code, blockDevice } = req.body;
-  const user = await getUser(code);
-  if (!user) return res.json({ ok:false });
-  await updateUser(code, { banned:true, bannedAt:Date.now() });
-  if (blockDevice && user.deviceId) await blockDevice(user.deviceId);
-  await secLog('USER_BANNED', { code, blockDevice:blockDevice||false });
-  res.json({ ok:true });
-});
-
-app.post('/admin/user/unban', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
-  const { code } = req.body;
-  await updateUser(code, { banned:false });
-  await secLog('USER_UNBANNED', { code });
-  res.json({ ok:true });
-});
-
-// User profile (full detail)
-app.get('/admin/user/:code', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
+// ─── ADMIN: USER PROFILE (full intelligence) ──────────────
+app.get('/admin/user/:code', (req, res) => {
+  if (!auth(req)) return res.status(401).json({ ok: false });
+  const d = load(); ensureArrays(d);
   const code = req.params.code.toUpperCase();
-  const user = await getUser(code);
-  if (!user) return res.json({ ok:false, msg:'User nahi mila' });
+  const user = d.users.find(u => u.code === code);
+  if (!user) return res.json({ ok: false, msg: 'User nahi mila' });
 
-  const [coinReqsSnap, wdReqsSnap, betsSnap] = await Promise.all([
-    C.coins().where('userCode','==',code).orderBy('createdAt','desc').limit(20).get(),
-    C.withdraw().where('userCode','==',code).orderBy('requestedAt','desc').limit(20).get(),
-    C.bets().where('userCode','==',code).orderBy('placedAt','desc').limit(20).get(),
-  ]);
-
-  const coinReqs = coinReqsSnap.docs.map(d=>({...d.data(),id:d.id}));
-  const wdReqs = wdReqsSnap.docs.map(d=>({...d.data(),id:d.id}));
-  const betList = betsSnap.docs.map(d=>({...d.data(),id:d.id}));
-  const approvedBets = betList.filter(b=>b.status==='approved');
+  // All coin requests
+  const coinReqs = d.coinRequests.filter(r => r.userCode === code);
   const totalBought = coinReqs.filter(r=>r.status==='approved').reduce((s,r)=>s+r.coins,0);
   const totalSpentReal = coinReqs.filter(r=>r.status==='approved').reduce((s,r)=>s+r.amount,0);
-  const totalWithdrawn = wdReqs.filter(r=>r.status==='paid').reduce((s,r)=>s+(r.coins||r.amount||0),0);
-  const totalWonCoins = approvedBets.filter(b=>b.won).reduce((s,b)=>s+(b.winAmount||0),0);
+  const pendingCoinReqs = coinReqs.filter(r=>r.status==='pending').length;
+  const rejectedCoinReqs = coinReqs.filter(r=>r.status==='rejected').length;
 
-  res.json({
-    ok:true,
-    user:{ code:user.code,name:user.name,coins:user.coins||0,banned:user.banned||false,deviceId:user.deviceId||null,createdAt:user.createdAt,firstLoginAt:user.firstLoginAt,lastLoginAt:user.lastLoginAt,lastLoginIP:user.lastLoginIP },
-    coins:{ current:user.coins||0,totalBought,totalSpentReal,totalWithdrawn,totalBetCoins:approvedBets.reduce((s,b)=>s+b.amount,0),totalWonCoins,totalLostCoins:approvedBets.filter(b=>b.won===false).reduce((s,b)=>s+b.amount,0),realMoneyIn:totalSpentReal,realMoneyOut:totalWithdrawn,pendingCoinReqs:coinReqs.filter(r=>r.status==='pending').length,rejectedCoinReqs:coinReqs.filter(r=>r.status==='rejected').length,pendingWd:wdReqs.filter(r=>r.status==='pending').length,rejectedWd:wdReqs.filter(r=>r.status==='rejected').length },
-    bets:{ total:approvedBets.length,wins:approvedBets.filter(b=>b.won).length,losses:approvedBets.filter(b=>b.won===false).length },
-    coinHistory:coinReqs,
-    withdrawHistory:wdReqs,
-    betHistory:betList,
-    risk:{ score:0, reasons:[] }
+  // All withdraw requests
+  const wdReqs = d.withdrawRequests.filter(r => r.userCode === code);
+  const totalWithdrawn = wdReqs.filter(r=>r.status==='paid').reduce((s,r)=>s+r.coins,0);
+  const pendingWd = wdReqs.filter(r=>r.status==='pending').length;
+  const rejectedWd = wdReqs.filter(r=>r.status==='rejected').length;
+
+  // All bets
+  const allBets = d.rounds.flatMap(r => {
+    const bet = (r.bets||[]).find(b=>b.userCode===code);
+    if (!bet) return [];
+    return [{ ...bet, roundWinNum: r.winNum, resultAt: r.resultAt, roundId: r.id }];
+  });
+  const approvedBets = allBets.filter(b=>b.status==='approved');
+  const totalBetCoins = approvedBets.reduce((s,b)=>s+b.amount,0);
+  const totalWonCoins = approvedBets.filter(b=>b.won).reduce((s,b)=>s+(b.winAmount||0),0);
+  const totalLostCoins = approvedBets.filter(b=>b.won===false).reduce((s,b)=>s+b.amount,0);
+  const winCount = approvedBets.filter(b=>b.won).length;
+  const lossCount = approvedBets.filter(b=>b.won===false).length;
+
+  // Net position
+  const netCoins = totalBought + totalWonCoins - totalLostCoins - totalWithdrawn;
+  const realMoneyIn = totalSpentReal;
+  const realMoneyOut = totalWithdrawn; // 1 coin = 1 rupee by default
+
+  // Fraud risk score (simple)
+  let riskScore = 0;
+  let riskReasons = [];
+  if (rejectedCoinReqs > 2) { riskScore += 30; riskReasons.push('Multiple rejected coin requests'); }
+  if (pendingCoinReqs > 3) { riskScore += 20; riskReasons.push('Many pending coin requests'); }
+  const withdrawRatio = totalBought > 0 ? totalWithdrawn/totalBought : 0;
+  if (withdrawRatio > 2) { riskScore += 40; riskReasons.push('Withdraw >> Bought (possible fraud)'); }
+  if (totalWonCoins > totalBought * 5) { riskScore += 20; riskReasons.push('Very high win ratio'); }
+  const secLogs = (d.securityLog||[]).filter(l=>l.data&&l.data.code===code);
+  const fraudLogs = secLogs.filter(l=>['DUPLICATE_UTR','BLOCKED_UTR_ATTEMPT','WITHDRAW_FRAUD_ATTEMPT','DEVICE_MISMATCH'].includes(l.type));
+  if (fraudLogs.length > 0) { riskScore += fraudLogs.length * 25; riskReasons.push(`${fraudLogs.length} security flags`); }
+
+  return res.json({
+    ok: true,
+    user: {
+      code: user.code, name: user.name, coins: user.coins||0,
+      banned: user.banned||false, deviceId: user.deviceId||null,
+      createdAt: user.createdAt, firstLoginAt: user.firstLoginAt,
+      lastLoginAt: user.lastLoginAt, lastLoginIP: user.lastLoginIP
+    },
+    coins: {
+      current: user.coins||0,
+      totalBought, totalSpentReal,
+      totalWithdrawn, totalBetCoins,
+      totalWonCoins, totalLostCoins,
+      netCoins,
+      realMoneyIn, realMoneyOut,
+      pendingCoinReqs, rejectedCoinReqs,
+      pendingWd, rejectedWd
+    },
+    bets: { total: approvedBets.length, wins: winCount, losses: lossCount },
+    coinHistory: coinReqs.slice().reverse().slice(0,20),
+    withdrawHistory: wdReqs.slice().reverse().slice(0,20),
+    betHistory: allBets.slice(-20).reverse(),
+    securityFlags: fraudLogs,
+    risk: { score: Math.min(riskScore, 100), reasons: riskReasons }
   });
 });
 
-// Search users
-app.get('/admin/search', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
+// ─── ADMIN: SEARCH USERS ──────────────────────────────────
+app.get('/admin/search', (req, res) => {
+  if (!auth(req)) return res.status(401).json({ ok: false });
   const q = (req.query.q||'').toUpperCase().trim();
-  if (!q) return res.json({ ok:true, results:[] });
-  try {
-    // Search by code (exact/prefix)
-    const byCode = await C.users().where('__name__','>=',q).where('__name__','<=',q+'\uf8ff').limit(20).get();
-    const results = byCode.docs.map(d=>({ ...d.data(), code:d.id }));
-    // Also search by name if code search returned few results
-    if (results.length < 5) {
-      const byName = await C.users().where('name','>=',q).where('name','<=',q+'\uf8ff').limit(10).get();
-      byName.docs.forEach(d=>{ if(!results.find(r=>r.code===d.id)) results.push({...d.data(),code:d.id}); });
-    }
-    res.json({ ok:true, results: results.slice(0,20).map(u=>({ code:u.code,name:u.name,coins:u.coins||0,banned:u.banned||false,deviceId:u.deviceId||null,lastLoginAt:u.lastLoginAt })) });
-  } catch(e) { res.json({ ok:true, results:[] }); }
-});
-
-// ── SETTINGS ──────────────────────────────────────────────
-app.post('/admin/settings', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
-  const { upiId,upiName,minBet,maxBet,multiplier,tgLink,minWithdraw,coinRate,maxDailyCoins } = req.body;
-  const current = await getSettings();
-  const updated = { ...current };
-  if (upiId!==undefined) updated.upiId=upiId;
-  if (upiName!==undefined) updated.upiName=upiName;
-  if (minBet!==undefined&&minBet!=='') updated.minBet=parseInt(minBet);
-  if (maxBet!==undefined&&maxBet!=='') updated.maxBet=parseInt(maxBet);
-  if (multiplier!==undefined&&multiplier!=='') updated.multiplier=parseInt(multiplier);
-  if (tgLink!==undefined) updated.tgLink=tgLink;
-  if (minWithdraw!==undefined&&minWithdraw!=='') updated.minWithdraw=parseInt(minWithdraw);
-  if (coinRate!==undefined&&coinRate!=='') updated.coinRate=parseFloat(coinRate);
-  if (maxDailyCoins!==undefined&&maxDailyCoins!=='') updated.maxDailyCoins=parseInt(maxDailyCoins);
-  await saveSettings(updated);
-  res.json({ ok:true, settings:updated });
-});
-
-// ── HISTORY ───────────────────────────────────────────────
-app.get('/admin/history', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
-  try {
-    const snap = await C.rounds().where('status','==','result').orderBy('resultAt','desc').limit(50).get();
-    const rounds = snap.docs.map(d=>({...d.data(),id:d.id}));
-    // Get bets for each round
-    const history = await Promise.all(rounds.map(async r=>{
-      const bets = await getBetsByRound(r.id);
-      return { ...r, bets };
+  if (!q) return res.json({ ok: true, results: [] });
+  const d = load(); ensureArrays(d);
+  const results = d.users
+    .filter(u => u.code.includes(q) || (u.name||'').toUpperCase().includes(q))
+    .slice(0, 20)
+    .map(u => ({
+      code: u.code, name: u.name, coins: u.coins||0,
+      banned: u.banned||false, deviceId: u.deviceId||null,
+      lastLoginAt: u.lastLoginAt
     }));
-    res.json({ ok:true, history });
-  } catch(e) { res.json({ ok:true, history:[] }); }
+  return res.json({ ok: true, results });
 });
 
-app.delete('/admin/history/:id', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
-  const roundId = req.params.id;
-  // Delete bets of this round
-  const betsSnap = await C.bets().where('roundId','==',roundId).get();
-  const b = db.batch();
-  betsSnap.docs.forEach(d => b.delete(d.ref));
-  b.delete(C.rounds().doc(roundId));
-  await b.commit();
-  res.json({ ok:true });
+// ─── ADMIN DATA ───────────────────────────────────────────
+app.get('/admin/data', (req, res) => {
+  if (!auth(req)) return res.status(401).json({ ok: false });
+  const d = load(); ensureArrays(d);
+  const round = getCurrentRound(d);
+  let numStats = null;
+  if (round && round.bets) {
+    numStats = {};
+    for (let i=0;i<=9;i++) numStats[i]={count:0,total:0,bets:[]};
+    round.bets.filter(b=>b.status==='approved').forEach(b=>{
+      numStats[b.number].count++;
+      numStats[b.number].total+=b.amount;
+      numStats[b.number].bets.push({name:b.userName,code:b.userCode,amount:b.amount});
+    });
+  }
+  const ri = round ? { ...round, betEndsAt:round.startedAt+40*60*1000, roundEndsAt:round.startedAt+60*60*1000 } : null;
+  const pendingCoins = d.coinRequests.filter(r=>r.status==='pending').length;
+  const pendingWithdraw = d.withdrawRequests.filter(r=>r.status==='pending').length;
+  return res.json({
+    ok: true, users: d.users, round: ri, numStats, settings: d.settings,
+    pendingCoins, pendingWithdraw,
+    stats: {
+      totalUsers: d.users.length,
+      totalRounds: d.rounds.filter(r=>r.status==='result').length,
+      currentBets: round ? (round.bets||[]).filter(b=>b.status==='approved').length : 0,
+      currentAmount: round ? (round.bets||[]).filter(b=>b.status==='approved').reduce((s,b)=>s+b.amount,0) : 0
+    }
+  });
 });
 
-app.delete('/admin/history', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
-  const snap = await C.rounds().where('status','==','result').get();
-  const b = db.batch();
-  snap.docs.forEach(d => b.delete(d.ref));
-  await b.commit();
-  res.json({ ok:true });
+// ─── ROUND CONTROLS ───────────────────────────────────────
+app.post('/admin/round/start', (req, res) => {
+  if (!auth(req)) return res.status(401).json({ ok: false });
+  const d = load();
+  if (getCurrentRound(d)) return res.json({ ok: false, msg: 'Pehle current round finish karo' });
+  const round = { id:uid(), status:'open', startedAt:Date.now(), closedAt:null, resultAt:null, winNum:null, bets:[] };
+  d.rounds.push(round); d.currentRoundId = round.id;
+  secLog(d, 'ROUND_START', { id: round.id });
+  save(d); res.json({ ok: true, round });
 });
 
-// Keep old route for compatibility
-app.delete('/admin/round/:id', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
-  await C.rounds().doc(req.params.id).delete();
-  res.json({ ok:true });
+app.post('/admin/round/close', (req, res) => {
+  if (!auth(req)) return res.status(401).json({ ok: false });
+  const d = load(); const round = getCurrentRound(d);
+  if (!round||round.status!=='open') return res.json({ ok: false, msg: 'Koi open round nahi' });
+  round.status='closed'; round.closedAt=Date.now();
+  secLog(d, 'ROUND_CLOSE', { id: round.id });
+  save(d); res.json({ ok: true });
 });
 
-// ── SECURITY LOG ──────────────────────────────────────────
-app.get('/admin/seclog', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
-  const snap = await C.seclog().orderBy('at','desc').limit(200).get();
-  res.json({ ok:true, log: snap.docs.map(d=>({...d.data(),id:d.id})) });
+app.post('/admin/round/result', (req, res) => {
+  if (!auth(req)) return res.status(401).json({ ok: false });
+  const { winNum } = req.body;
+  const num = parseInt(winNum);
+  if (isNaN(num)||num<0||num>9) return res.json({ ok: false, msg: '0-9 mein se number daalo' });
+  const d = load(); ensureArrays(d);
+  const round = getCurrentRound(d);
+  if (!round||round.status==='result') return res.json({ ok: false, msg: 'Round result ke liye ready nahi' });
+  const mult = d.settings.multiplier||9;
+  round.status='result'; round.winNum=num; round.resultAt=Date.now();
+  const winners=[];
+  (round.bets||[]).forEach(b=>{
+    if (b.status==='approved') {
+      b.won = b.number===num;
+      b.winAmount = b.won ? b.amount*mult : 0;
+      if (b.won) {
+        const user = d.users.find(u=>u.code===b.userCode);
+        if (user) { user.coins = (user.coins||0) + b.winAmount; winners.push({ name:b.userName, code:b.userCode, coins:b.winAmount }); }
+      }
+    }
+  });
+  d.currentRoundId=null;
+  secLog(d, 'ROUND_RESULT', { winNum: num, winners: winners.length });
+  save(d); res.json({ ok:true, winNum:num, winners });
 });
 
-// ── DEVICE / UTR BLOCK ────────────────────────────────────
-app.post('/admin/device/block', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
-  const { deviceId } = req.body;
-  await blockDevice(deviceId);
-  res.json({ ok:true });
+// ─── COIN REQUESTS ────────────────────────────────────────
+app.get('/admin/coins', (req, res) => {
+  if (!auth(req)) return res.status(401).json({ ok: false });
+  const d = load(); ensureArrays(d);
+  res.json({ ok: true, requests: d.coinRequests.slice().reverse() });
 });
 
-app.post('/admin/utr/block', async (req, res) => {
-  if (!auth(req)) return res.status(401).json({ ok:false });
-  const { utr } = req.body;
-  await blockUTR(utr);
-  res.json({ ok:true });
+app.post('/admin/coins/approve', (req, res) => {
+  if (!auth(req)) return res.status(401).json({ ok: false });
+  const { reqId } = req.body; const d = load(); ensureArrays(d);
+  const cr = d.coinRequests.find(r=>r.id===reqId);
+  if (!cr) return res.json({ ok: false, msg: 'Request nahi mili' });
+  if (cr.status !== 'pending') return res.json({ ok: false, msg: 'Already processed' });
+  const user = d.users.find(u=>u.code===cr.userCode);
+  if (!user) return res.json({ ok: false, msg: 'User nahi mila' });
+  user.coins = (user.coins||0) + cr.coins;
+  cr.status = 'approved'; cr.processedAt = Date.now();
+  secLog(d, 'COIN_APPROVED', { code: cr.userCode, utr: cr.utr, coins: cr.coins });
+  save(d); res.json({ ok: true, coins: user.coins });
 });
 
-app.listen(PORT, '0.0.0.0', () => console.log('NUMBET v5 Multi-Collection Firebase on port ' + PORT));
+app.post('/admin/coins/reject', (req, res) => {
+  if (!auth(req)) return res.status(401).json({ ok: false });
+  const { reqId, blockUTR } = req.body; const d = load(); ensureArrays(d);
+  const cr = d.coinRequests.find(r=>r.id===reqId);
+  if (!cr) return res.json({ ok: false, msg: 'Request nahi mili' });
+  cr.status = 'rejected'; cr.processedAt = Date.now();
+  if (blockUTR && !d.blockedUTRs.includes(cr.utr)) d.blockedUTRs.push(cr.utr);
+  secLog(d, 'COIN_REJECTED', { code: cr.userCode, utr: cr.utr, blocked: blockUTR||false });
+  save(d); res.json({ ok: true });
+});
+
+// ─── WITHDRAW REQUESTS ────────────────────────────────────
+app.get('/admin/withdraw', (req, res) => {
+  if (!auth(req)) return res.status(401).json({ ok: false });
+  const d = load(); ensureArrays(d);
+  res.json({ ok: true, requests: d.withdrawRequests.slice().reverse() });
+});
+
+app.post('/admin/withdraw/done', (req, res) => {
+  if (!auth(req)) return res.status(401).json({ ok: false });
+  const { reqId } = req.body; const d = load(); ensureArrays(d);
+  const wr = d.withdrawRequests.find(r=>r.id===reqId);
+  if (!wr) return res.json({ ok: false, msg: 'Request nahi mili' });
+  wr.status = 'paid'; wr.paidAt = Date.now();
+  secLog(d, 'WITHDRAW_PAID', { code: wr.userCode, coins: wr.coins, upiId: wr.upiId });
+  save(d); res.json({ ok: true });
+});
+
+app.post('/admin/withdraw/reject', (req, res) => {
+  if (!auth(req)) return res.status(401).json({ ok: false });
+  const { reqId } = req.body; const d = load(); ensureArrays(d);
+  const wr = d.withdrawRequests.find(r=>r.id===reqId);
+  if (!wr) return res.json({ ok: false, msg: 'Request nahi mili' });
+  const user = d.users.find(u=>u.code===wr.userCode);
+  if (user) user.coins = (user.coins||0) + wr.coins;
+  wr.status = 'rejected'; wr.processedAt = Date.now();
+  secLog(d, 'WITHDRAW_REJECTED', { code: wr.userCode, coins: wr.coins });
+  save(d); res.json({ ok: true });
+});
+
+// ─── USER MANAGEMENT ──────────────────────────────────────
+app.post('/admin/user', (req, res) => {
+  if (!auth(req)) return res.status(401).json({ ok: false });
+  const { name } = req.body; const d = load(); const code = genCode();
+  d.users.push({ code, name:name||'User', createdAt:Date.now(), deviceId:null, coins:0, banned:false });
+  save(d); res.json({ ok:true, code, name:name||'User' });
+});
+
+app.delete('/admin/user/:code', (req, res) => {
+  if (!auth(req)) return res.status(401).json({ ok: false });
+  const d = load(); d.users = d.users.filter(u=>u.code!==req.params.code); save(d); res.json({ ok: true });
+});
+
+app.post('/admin/user/resetdevice', (req, res) => {
+  if (!auth(req)) return res.status(401).json({ ok: false });
+  const { code } = req.body; const d = load();
+  const user = d.users.find(u=>u.code===code);
+  if (!user) return res.json({ ok: false, msg: 'User nahi mila' });
+  user.deviceId=null; save(d); res.json({ ok: true });
+});
+
+app.post('/admin/user/coins', (req, res) => {
+  if (!auth(req)) return res.status(401).json({ ok: false });
+  const { code, coins } = req.body; const d = load();
+  const user = d.users.find(u=>u.code===code);
+  if (!user) return res.json({ ok: false, msg: 'User nahi mila' });
+  user.coins = Math.max(0, parseInt(coins)||0);
+  save(d); res.json({ ok: true, coins: user.coins });
+});
+
+// Ban/unban user + optionally block device
+app.post('/admin/user/ban', (req, res) => {
+  if (!auth(req)) return res.status(401).json({ ok: false });
+  const { code, blockDevice } = req.body; const d = load(); ensureArrays(d);
+  const user = d.users.find(u=>u.code===code);
+  if (!user) return res.json({ ok: false, msg: 'User nahi mila' });
+  user.banned = true; user.bannedAt = Date.now();
+  if (blockDevice && user.deviceId && !d.blockedDevices.includes(user.deviceId))
+    d.blockedDevices.push(user.deviceId);
+  secLog(d, 'USER_BANNED', { code, blockDevice: blockDevice||false, deviceId: user.deviceId });
+  save(d); res.json({ ok: true });
+});
+
+app.post('/admin/user/unban', (req, res) => {
+  if (!auth(req)) return res.status(401).json({ ok: false });
+  const { code } = req.body; const d = load(); ensureArrays(d);
+  const user = d.users.find(u=>u.code===code);
+  if (!user) return res.json({ ok: false, msg: 'User nahi mila' });
+  user.banned = false; delete user.bannedAt;
+  secLog(d, 'USER_UNBANNED', { code });
+  save(d); res.json({ ok: true });
+});
+
+// ─── SECURITY LOG ─────────────────────────────────────────
+app.get('/admin/seclog', (req, res) => {
+  if (!auth(req)) return res.status(401).json({ ok: false });
+  const d = load(); ensureArrays(d);
+  res.json({ ok: true, log: (d.securityLog||[]).slice(0,200) });
+});
+
+// ─── SETTINGS ─────────────────────────────────────────────
+app.post('/admin/settings', (req, res) => {
+  if (!auth(req)) return res.status(401).json({ ok: false });
+  const { upiId, upiName, minBet, maxBet, multiplier, tgLink, minWithdraw, coinRate, maxDailyCoins } = req.body;
+  const d = load(); ensureArrays(d);
+  if (upiId!==undefined) d.settings.upiId=upiId;
+  if (upiName!==undefined) d.settings.upiName=upiName;
+  if (minBet!==undefined&&minBet!=='') d.settings.minBet=parseInt(minBet);
+  if (maxBet!==undefined&&maxBet!=='') d.settings.maxBet=parseInt(maxBet);
+  if (multiplier!==undefined&&multiplier!=='') d.settings.multiplier=parseInt(multiplier);
+  if (tgLink!==undefined) d.settings.tgLink=tgLink;
+  if (minWithdraw!==undefined&&minWithdraw!=='') d.settings.minWithdraw=parseInt(minWithdraw);
+  if (coinRate!==undefined&&coinRate!=='') d.settings.coinRate=parseFloat(coinRate);
+  if (maxDailyCoins!==undefined&&maxDailyCoins!=='') d.settings.maxDailyCoins=parseInt(maxDailyCoins);
+  save(d); res.json({ ok:true, settings:d.settings });
+});
+
+// ─── HISTORY ──────────────────────────────────────────────
+app.get('/admin/history', (req, res) => {
+  if (!auth(req)) return res.status(401).json({ ok: false });
+  const d = load();
+  res.json({ ok:true, history: d.rounds.filter(r=>r.status==='result').reverse() });
+});
+
+app.delete('/admin/history/:roundId', (req, res) => {
+  if (!auth(req)) return res.status(401).json({ ok: false });
+  const d = load();
+  const before = d.rounds.length;
+  d.rounds = d.rounds.filter(r => r.id !== req.params.roundId);
+  if (d.rounds.length === before) return res.json({ ok: false, msg: 'Round nahi mila' });
+  save(d); res.json({ ok: true });
+});
+
+app.delete('/admin/history', (req, res) => {
+  if (!auth(req)) return res.status(401).json({ ok: false });
+  const d = load();
+  d.rounds = d.rounds.filter(r => r.status !== 'result');
+  save(d); res.json({ ok: true });
+});
+
+app.listen(PORT, '0.0.0.0', () => console.log('Server on ' + PORT));
