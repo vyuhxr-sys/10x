@@ -11,43 +11,10 @@ const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
-
-// ALL SECRETS FROM ENV ONLY
-const ADMIN_PASS = process.env.ADMIN_PASS;
-const ADMIN_KEY  = process.env.ADMIN_KEY;
-const APP_SECRET = process.env.APP_SECRET;
-if (!ADMIN_PASS || !ADMIN_KEY || !APP_SECRET) {
-  console.error('FATAL: ADMIN_PASS, ADMIN_KEY, APP_SECRET env vars must be set!');
-  process.exit(1);
-}
+const ADMIN_PASS = process.env.ADMIN_PASS || 'ADMIN2026';
 
 app.use(cors({ origin: true }));
-app.use(express.json({ limit: '1mb' }));
-
-// Global rate limit 120/min per IP
-const _gl = {};
-app.use((req, res, next) => {
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
-  const now = Date.now();
-  if (!_gl[ip]) _gl[ip] = [];
-  _gl[ip] = _gl[ip].filter(t => now - t < 60000);
-  if (_gl[ip].length > 120) return res.status(429).json({ ok:false, msg:'Too many requests' });
-  _gl[ip].push(now);
-  next();
-});
-
-// APP SECRET — skip for /admin (dual-key auth)
-app.use((req, res, next) => {
-  if (req.path.startsWith('/admin')) return next();
-  if (req.headers['x-app'] !== APP_SECRET) return res.status(403).json({ ok:false, msg:'Forbidden' });
-  next();
-});
-
-// Bot filter
-app.use((req, res, next) => {
-  if (!req.headers['user-agent']) return res.status(403).json({ ok:false, msg:'Forbidden' });
-  next();
-});
+app.use(express.json({ limit: '10mb' }));
 
 // ═══════════════════════════════════════════════════════════
 // FIREBASE INIT
@@ -77,21 +44,7 @@ const C = {
 // ═══════════════════════════════════════════════════════════
 // HELPERS
 // ═══════════════════════════════════════════════════════════
-// Admin brute force protection
-const _adminAttempts = {};
-function auth(req) {
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
-  if (!_adminAttempts[ip]) _adminAttempts[ip] = { count:0, resetAt: Date.now() + 15*60*1000 };
-  if (Date.now() > _adminAttempts[ip].resetAt) _adminAttempts[ip] = { count:0, resetAt: Date.now() + 15*60*1000 };
-  if (_adminAttempts[ip].count >= 5) return false;
-  const pass = req.headers['x-pass'];
-  const key  = req.headers['x-key'];
-  if (!pass || !key) { _adminAttempts[ip].count++; return false; }
-  const ok = (pass === ADMIN_PASS && key === ADMIN_KEY);
-  if (!ok) _adminAttempts[ip].count++;
-  else _adminAttempts[ip].count = 0;
-  return ok;
-}
+function auth(req) { return req.headers['x-pass'] === ADMIN_PASS; }
 function uid() { return Date.now().toString(36) + Math.random().toString(36).substr(2,5).toUpperCase(); }
 function genCode() {
   const c = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -811,12 +764,12 @@ app.post('/admin/user/coins', async (req, res) => {
 
 app.post('/admin/user/ban', async (req, res) => {
   if (!auth(req)) return res.status(401).json({ ok:false });
-  const { code, blockDevice: shouldBlockDevice } = req.body;
+  const { code, blockDevice } = req.body;
   const user = await getUser(code);
   if (!user) return res.json({ ok:false });
   await updateUser(code, { banned:true, bannedAt:Date.now() });
-  if (shouldBlockDevice && user.deviceId) await blockDevice(user.deviceId);
-  await secLog('USER_BANNED', { code, blockDevice:shouldBlockDevice||false });
+  if (blockDevice && user.deviceId) await blockDevice(user.deviceId);
+  await secLog('USER_BANNED', { code, blockDevice:blockDevice||false });
   res.json({ ok:true });
 });
 
@@ -858,7 +811,7 @@ app.get('/admin/user/:code', async (req, res) => {
     coinHistory:coinReqs,
     withdrawHistory:wdReqs,
     betHistory:betList,
-    securityFlags:[], risk:{ score:0, reasons:[] }
+    risk:{ score:0, reasons:[] }
   });
 });
 
@@ -964,7 +917,4 @@ app.post('/admin/utr/block', async (req, res) => {
   res.json({ ok:true });
 });
 
-// Block unknown routes
-app.use((req, res) => { res.status(404).json({ ok:false, msg:'Not found' }); });
-
-app.listen(PORT, '0.0.0.0', () => console.log('NUMBET v5 SECURE on port ' + PORT));
+app.listen(PORT, '0.0.0.0', () => console.log('NUMBET v5 Multi-Collection Firebase on port ' + PORT));
