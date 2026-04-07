@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WIN.X.KING — Admin</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#060409;--bg2:#0a0610;--bg3:#0e0a18;--surface:#120e1f;--surface2:#18132a;--border:#2a1f4a;--border2:#3d2d6e;--purple:#8b5cf6;--purple2:#7c3aed;--pink:#ec4899;--gold:#fbbf24;--cyan:#22d3ee;--green:#10b981;--red:#f43f5e;--text:#f1eeff;--text2:#a898d8;--text3:#4a3a7a;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:'Space Grotesk',sans-serif;font-size:13px;min-height:100vh;}
+header{background:var(--bg);border-bottom:1px solid var(--border);padding:12px 20px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:10;backdrop-filter:blur(10px);}
+.logo{font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:3px;background:linear-gradient(135deg,var(--purple),var(--pink));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.logo small{display:block;font-size:9px;color:var(--text3);letter-spacing:3px;font-family:'Space Mono',monospace;-webkit-text-fill-color:var(--text3);}
+.cs{font-size:10px;padding:4px 12px;border-radius:20px;border:1px solid;font-family:'Space Mono',monospace;}
+.cs-ok{color:var(--green);border-color:var(--green)33;background:#001a0d;}
+.cs-fail{color:var(--red);border-color:var(--red)33;background:#1a0008;}
+.cs-off{color:var(--text3);border-color:var(--border);background:var(--surface);}
+.wrap{max-width:1000px;margin:0 auto;padding:16px;}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:20px;margin-bottom:14px;position:relative;overflow:hidden;}
+.card::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--border2),transparent);}
+.ct{font-family:'Space Mono',monospace;font-size:10px;letter-spacing:3px;color:var(--purple);margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--border);}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+@media(max-width:600px){.g2{grid-template-columns:1fr;}}
+.sg{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px;}
+@media(max-width:500px){.sg{grid-template-columns:1fr 1fr;}}
+.sb{background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;text-align:center;}
+.sv{font-family:'Bebas Neue',sans-serif;font-size:28px;color:var(--gold);letter-spacing:1px;}
+.sl{font-size:9px;color:var(--text3);margin-top:4px;letter-spacing:2px;font-family:'Space Mono',monospace;}
+lbl{font-size:10px;color:var(--text3);display:block;margin-bottom:4px;letter-spacing:1px;font-family:'Space Mono',monospace;}
+input,select,textarea{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:'Space Mono',monospace;font-size:12px;padding:9px 12px;outline:none;margin-bottom:10px;transition:border 0.2s;}
+input:focus,select:focus,textarea:focus{border-color:var(--purple2);}
+textarea{resize:vertical;min-height:72px;line-height:1.7;}
+.btn{background:var(--bg3);border:1px solid var(--border2);color:var(--purple);font-family:'Space Grotesk',sans-serif;font-size:11px;font-weight:700;letter-spacing:2px;padding:10px 18px;border-radius:8px;cursor:pointer;transition:all 0.2s;}
+.btn:hover{background:var(--surface2);border-color:var(--purple);}
+.btn-full{width:100%;text-align:center;display:block;padding:13px;font-size:12px;}
+.btn-gold{border-color:var(--gold)44;color:var(--gold);background:#1a1400;}
+.btn-gold:hover{border-color:var(--gold);background:#221900;}
+.btn-red{border-color:var(--red)33;color:var(--red);background:#1a0008;font-size:10px;padding:5px 12px;}
+.btn-green{border-color:var(--green)44;color:var(--green);background:#001a0d;}
+/* Plan tabs */
+.plan-tabs{display:flex;gap:8px;margin-bottom:16px;}
+.ptab{padding:8px 16px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text3);font-family:'Space Mono',monospace;font-size:10px;letter-spacing:2px;cursor:pointer;transition:all 0.2s;}
+.ptab.active-trial{border-color:var(--green)55;color:var(--green);background:#001a0d;}
+.ptab.active-basic{border-color:var(--purple)55;color:var(--purple);background:#1a0d3a;}
+.ptab.active-pro{border-color:var(--gold)55;color:var(--gold);background:#1a1400;}
+.plan-panel{display:none;}
+.plan-panel.active{display:block;}
+/* Location blocks */
+.loc-block{border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:10px;background:var(--bg3);}
+.loc-hdr{display:flex;align-items:center;gap:10px;margin-bottom:12px;}
+.loc-num{font-family:'Space Mono',monospace;font-size:10px;color:var(--text3);}
+.loc-name-inp{background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:'Space Mono',monospace;font-size:11px;padding:5px 10px;outline:none;width:180px;margin-bottom:0;}
+.num-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;}
+.ntag{font-size:9px;color:var(--text3);min-width:50px;font-family:'Space Mono',monospace;}
+.ni{width:54px;text-align:center;font-family:'Space Mono',monospace;font-size:18px;padding:6px 2px;border-radius:6px;margin-bottom:0;}
+/* Toggle */
+.tg{position:relative;width:44px;height:24px;cursor:pointer;display:inline-block;}
+.tg input{opacity:0;width:0;height:0;}
+.ts{position:absolute;inset:0;background:var(--bg3);border-radius:12px;border:1px solid var(--border);transition:0.3s;}
+.ts::before{content:'';position:absolute;width:18px;height:18px;left:2px;top:2px;background:var(--text3);border-radius:50%;transition:0.3s;}
+.tg input:checked~.ts{background:#001a0d;border-color:var(--green)44;}
+.tg input:checked~.ts::before{transform:translateX(20px);background:var(--green);}
+.msg{padding:9px 13px;border-radius:8px;font-size:11px;margin-top:8px;}
+.mok{background:#001a0d;border:1px solid var(--green)33;color:var(--green);}
+.merr{background:#1a0008;border:1px solid var(--red)33;color:var(--red);}
+.minf{background:var(--bg3);border:1px solid var(--border);color:var(--text3);}
+.pwl{max-height:300px;overflow-y:auto;}
+.pwl::-webkit-scrollbar{width:4px;}
+.pwl::-webkit-scrollbar-thumb{background:var(--border2);border-radius:4px;}
+.pwr{display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;margin-bottom:6px;flex-wrap:wrap;}
+.pwc{font-family:'Space Mono',monospace;font-size:14px;color:var(--gold);letter-spacing:2px;flex:1;min-width:110px;}
+.pwm{font-size:10px;color:var(--text3);}
+.tag{font-size:9px;padding:3px 8px;border-radius:4px;font-family:'Space Mono',monospace;}
+.ta{background:#001a0d;color:var(--green);border:1px solid var(--green)33;}
+.te{background:#1a0008;color:var(--red);border:1px solid var(--red)33;}
+.pred-preview{background:var(--bg3);border:1px solid var(--gold)33;border-radius:12px;padding:16px;margin-top:12px;display:none;}
+.flex{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.ml{margin-left:auto;}
+.divider{height:1px;background:var(--border);margin:12px 0;}
+.hint{font-size:11px;color:var(--text3);margin-bottom:12px;line-height:1.7;}
+</style>
+</head>
+<body>
+<header>
+  <div><div class="logo">WIN.X.KING<small>ADMIN PANEL — OWNER ONLY</small></div></div>
+  <span id="cs" class="cs cs-off">⚪ Not Connected</span>
+</header>
+<div class="wrap">
+
+<!-- CONNECTION -->
+<div class="card">
+  <div class="ct">◈ SERVER CONNECTION</div>
+  <div class="g2">
+    <div>
+      <lbl>RENDER URL</lbl>
+      <input id="sUrl" type="text" value="https://king-3k66.onrender.com">
+      <lbl>ADMIN PASSWORD</lbl>
+      <input id="sPass" type="password" value="NUMEXADMIN2026">
+    </div>
+    <div style="display:flex;flex-direction:column;justify-content:center;gap:10px;">
+      <button class="btn btn-gold btn-full" id="connectBtn" onclick="connect()">🔗 CONNECT KARO</button>
+      <div id="cMsg"></div>
+    </div>
+  </div>
+</div>
+
+<!-- STATS -->
+<div class="sg">
+  <div class="sb"><div class="sv" id="stSold">—</div><div class="sl">TOTAL SOLD</div></div>
+  <div class="sb"><div class="sv" id="stRev">—</div><div class="sl">REVENUE ₹</div></div>
+  <div class="sb"><div class="sv" id="stAct">—</div><div class="sl">ACTIVE USERS</div></div>
+  <div class="sb"><div class="sv" id="stPwd">—</div><div class="sl">TOTAL CODES</div></div>
+</div>
+
+<!-- PREDICTION — PLAN WISE -->
+<div class="card">
+  <div class="ct">◈ AAJ KI PREDICTION — PLAN WISE NUMBERS DAALO</div>
+  <div class="hint">Har plan ke liye alag numbers daalo — sirf usi plan ke users ko dikhenge</div>
+
+  <!-- Plan Tabs -->
+  <div class="plan-tabs">
+    <div class="ptab active-trial" onclick="switchPlan('trial')">🔮 ₹99 TRIAL</div>
+    <div class="ptab" onclick="switchPlan('basic')" id="tab-basic">⚡ ₹199 BASIC</div>
+    <div class="ptab" onclick="switchPlan('pro')" id="tab-pro">👑 ₹599 PRO</div>
+  </div>
+
+  <!-- TRIAL PANEL (1 location = All Game) -->
+  <div class="plan-panel active" id="panel-trial">
+    <div class="hint" style="color:var(--green)88;">📍 1 Location · All Game (FB GB GL DS sabko same numbers)</div>
+    <div class="loc-block" style="border-color:var(--green)33;">
+      <div class="loc-hdr" style="color:var(--green);">
+        <span style="font-size:12px;font-weight:700;">ALL GAME</span>
+        <input class="loc-name-inp" id="t99-name" value="All Game" style="border-color:var(--green)33;">
+      </div>
+      <div class="num-row">
+        <span class="ntag">SINGLE:</span>
+        <input class="ni t99-single" type="number" min="0" max="99" placeholder="00" style="border-color:var(--green)44;">
+        <input class="ni t99-single" type="number" min="0" max="99" placeholder="00" style="border-color:var(--green)44;">
+      </div>
+      <div class="num-row">
+        <span class="ntag">SPOT 1:</span>
+        <input class="ni t99-spot1" type="number" min="0" max="99" placeholder="00">
+        <input class="ni t99-spot1" type="number" min="0" max="99" placeholder="00">
+        <input class="ni t99-spot1" type="number" min="0" max="99" placeholder="00">
+        <input class="ni t99-spot1" type="number" min="0" max="99" placeholder="00">
+      </div>
+      <div class="num-row">
+        <span class="ntag">SPOT 2:</span>
+        <input class="ni t99-spot2" type="number" min="0" max="99" placeholder="00">
+        <input class="ni t99-spot2" type="number" min="0" max="99" placeholder="00">
+        <input class="ni t99-spot2" type="number" min="0" max="99" placeholder="00">
+        <input class="ni t99-spot2" type="number" min="0" max="99" placeholder="00">
+      </div>
+    </div>
+  </div>
+
+  <!-- BASIC PANEL (2 locations) -->
+  <div class="plan-panel" id="panel-basic">
+    <div class="hint" style="color:var(--purple)88;">📍 2 Locations — har ek ka naam aur numbers alag daalo</div>
+    <!-- Location 1 -->
+    <div class="loc-block" style="border-color:var(--purple)33;">
+      <div class="loc-hdr"><span class="loc-num">LOC 1</span><input class="loc-name-inp" id="b199-name1" placeholder="Jaise: Faridabad" style="border-color:var(--purple)33;"></div>
+      <div class="num-row"><span class="ntag">SINGLE:</span><input class="ni b199-s1-single" type="number" min="0" max="99" placeholder="00" style="border-color:var(--purple)44;"><input class="ni b199-s1-single" type="number" min="0" max="99" placeholder="00" style="border-color:var(--purple)44;"></div>
+      <div class="num-row"><span class="ntag">SPOT 1:</span><input class="ni b199-s1-spot1" type="number" min="0" max="99" placeholder="00"><input class="ni b199-s1-spot1" type="number" min="0" max="99" placeholder="00"><input class="ni b199-s1-spot1" type="number" min="0" max="99" placeholder="00"><input class="ni b199-s1-spot1" type="number" min="0" max="99" placeholder="00"></div>
+      <div class="num-row"><span class="ntag">SPOT 2:</span><input class="ni b199-s1-spot2" type="number" min="0" max="99" placeholder="00"><input class="ni b199-s1-spot2" type="number" min="0" max="99" placeholder="00"><input class="ni b199-s1-spot2" type="number" min="0" max="99" placeholder="00"><input class="ni b199-s1-spot2" type="number" min="0" max="99" placeholder="00"></div>
+    </div>
+    <!-- Location 2 -->
+    <div class="loc-block" style="border-color:var(--cyan)33;">
+      <div class="loc-hdr"><span class="loc-num">LOC 2</span><input class="loc-name-inp" id="b199-name2" placeholder="Jaise: Gali" style="border-color:var(--cyan)33;"></div>
+      <div class="num-row"><span class="ntag">SINGLE:</span><input class="ni b199-s2-single" type="number" min="0" max="99" placeholder="00" style="border-color:var(--cyan)44;"><input class="ni b199-s2-single" type="number" min="0" max="99" placeholder="00" style="border-color:var(--cyan)44;"></div>
+      <div class="num-row"><span class="ntag">SPOT 1:</span><input class="ni b199-s2-spot1" type="number" min="0" max="99" placeholder="00"><input class="ni b199-s2-spot1" type="number" min="0" max="99" placeholder="00"><input class="ni b199-s2-spot1" type="number" min="0" max="99" placeholder="00"><input class="ni b199-s2-spot1" type="number" min="0" max="99" placeholder="00"></div>
+      <div class="num-row"><span class="ntag">SPOT 2:</span><input class="ni b199-s2-spot2" type="number" min="0" max="99" placeholder="00"><input class="ni b199-s2-spot2" type="number" min="0" max="99" placeholder="00"><input class="ni b199-s2-spot2" type="number" min="0" max="99" placeholder="00"><input class="ni b199-s2-spot2" type="number" min="0" max="99" placeholder="00"></div>
+    </div>
+  </div>
+
+  <!-- PRO PANEL (4 locations) -->
+  <div class="plan-panel" id="panel-pro">
+    <div class="hint" style="color:var(--gold)88;">📍 4 Locations — sabke naam aur numbers alag alag daalo</div>
+    <!-- Location 1 -->
+    <div class="loc-block" style="border-color:var(--purple)33;">
+      <div class="loc-hdr"><span class="loc-num">LOC 1</span><input class="loc-name-inp" id="p599-name1" placeholder="Jaise: Faridabad" style="border-color:var(--purple)33;"></div>
+      <div class="num-row"><span class="ntag">SINGLE:</span><input class="ni p599-s1-single" type="number" min="0" max="99" placeholder="00" style="border-color:var(--purple)44;"><input class="ni p599-s1-single" type="number" min="0" max="99" placeholder="00" style="border-color:var(--purple)44;"></div>
+      <div class="num-row"><span class="ntag">SPOT 1:</span><input class="ni p599-s1-spot1" type="number" min="0" max="99" placeholder="00"><input class="ni p599-s1-spot1" type="number" min="0" max="99" placeholder="00"><input class="ni p599-s1-spot1" type="number" min="0" max="99" placeholder="00"><input class="ni p599-s1-spot1" type="number" min="0" max="99" placeholder="00"></div>
+      <div class="num-row"><span class="ntag">SPOT 2:</span><input class="ni p599-s1-spot2" type="number" min="0" max="99" placeholder="00"><input class="ni p599-s1-spot2" type="number" min="0" max="99" placeholder="00"><input class="ni p599-s1-spot2" type="number" min="0" max="99" placeholder="00"><input class="ni p599-s1-spot2" type="number" min="0" max="99" placeholder="00"></div>
+    </div>
+    <!-- Location 2 -->
+    <div class="loc-block" style="border-color:var(--cyan)33;">
+      <div class="loc-hdr"><span class="loc-num">LOC 2</span><input class="loc-name-inp" id="p599-name2" placeholder="Jaise: Ghaziabad" style="border-color:var(--cyan)33;"></div>
+      <div class="num-row"><span class="ntag">SINGLE:</span><input class="ni p599-s2-single" type="number" min="0" max="99" placeholder="00" style="border-color:var(--cyan)44;"><input class="ni p599-s2-single" type="number" min="0" max="99" placeholder="00" style="border-color:var(--cyan)44;"></div>
+      <div class="num-row"><span class="ntag">SPOT 1:</span><input class="ni p599-s2-spot1" type="number" min="0" max="99" placeholder="00"><input class="ni p599-s2-spot1" type="number" min="0" max="99" placeholder="00"><input class="ni p599-s2-spot1" type="number" min="0" max="99" placeholder="00"><input class="ni p599-s2-spot1" type="number" min="0" max="99" placeholder="00"></div>
+      <div class="num-row"><span class="ntag">SPOT 2:</span><input class="ni p599-s2-spot2" type="number" min="0" max="99" placeholder="00"><input class="ni p599-s2-spot2" type="number" min="0" max="99" placeholder="00"><input class="ni p599-s2-spot2" type="number" min="0" max="99" placeholder="00"><input class="ni p599-s2-spot2" type="number" min="0" max="99" placeholder="00"></div>
+    </div>
+    <!-- Location 3 -->
+    <div class="loc-block" style="border-color:var(--gold)33;">
+      <div class="loc-hdr"><span class="loc-num">LOC 3</span><input class="loc-name-inp" id="p599-name3" placeholder="Jaise: Gali" style="border-color:var(--gold)33;"></div>
+      <div class="num-row"><span class="ntag">SINGLE:</span><input class="ni p599-s3-single" type="number" min="0" max="99" placeholder="00" style="border-color:var(--gold)44;"><input class="ni p599-s3-single" type="number" min="0" max="99" placeholder="00" style="border-color:var(--gold)44;"></div>
+      <div class="num-row"><span class="ntag">SPOT 1:</span><input class="ni p599-s3-spot1" type="number" min="0" max="99" placeholder="00"><input class="ni p599-s3-spot1" type="number" min="0" max="99" placeholder="00"><input class="ni p599-s3-spot1" type="number" min="0" max="99" placeholder="00"><input class="ni p599-s3-spot1" type="number" min="0" max="99" placeholder="00"></div>
+      <div class="num-row"><span class="ntag">SPOT 2:</span><input class="ni p599-s3-spot2" type="number" min="0" max="99" placeholder="00"><input class="ni p599-s3-spot2" type="number" min="0" max="99" placeholder="00"><input class="ni p599-s3-spot2" type="number" min="0" max="99" placeholder="00"><input class="ni p599-s3-spot2" type="number" min="0" max="99" placeholder="00"></div>
+    </div>
+    <!-- Location 4 -->
+    <div class="loc-block" style="border-color:var(--green)33;">
+      <div class="loc-hdr"><span class="loc-num">LOC 4</span><input class="loc-name-inp" id="p599-name4" placeholder="Jaise: Disawar" style="border-color:var(--green)33;"></div>
+      <div class="num-row"><span class="ntag">SINGLE:</span><input class="ni p599-s4-single" type="number" min="0" max="99" placeholder="00" style="border-color:var(--green)44;"><input class="ni p599-s4-single" type="number" min="0" max="99" placeholder="00" style="border-color:var(--green)44;"></div>
+      <div class="num-row"><span class="ntag">SPOT 1:</span><input class="ni p599-s4-spot1" type="number" min="0" max="99" placeholder="00"><input class="ni p599-s4-spot1" type="number" min="0" max="99" placeholder="00"><input class="ni p599-s4-spot1" type="number" min="0" max="99" placeholder="00"><input class="ni p599-s4-spot1" type="number" min="0" max="99" placeholder="00"></div>
+      <div class="num-row"><span class="ntag">SPOT 2:</span><input class="ni p599-s4-spot2" type="number" min="0" max="99" placeholder="00"><input class="ni p599-s4-spot2" type="number" min="0" max="99" placeholder="00"><input class="ni p599-s4-spot2" type="number" min="0" max="99" placeholder="00"><input class="ni p599-s4-spot2" type="number" min="0" max="99" placeholder="00"></div>
+    </div>
+  </div>
+
+  <div class="flex" style="gap:10px;margin-top:14px;">
+    <button class="btn btn-gold" id="saveBtn" style="flex:1;padding:13px;" onclick="savePred()">⚡ SAVE — USERS KO DIKHAO</button>
+    <button class="btn btn-red" onclick="clearPred()">🗑</button>
+  </div>
+  <div id="pMsg"></div>
+  <div class="pred-preview" id="predPrev">
+    <div style="font-size:10px;color:var(--gold);margin-bottom:8px;">✅ LIVE — Users ko ab dikhega:</div>
+    <div id="prevContent"></div>
+  </div>
+</div>
+
+<!-- AD -->
+<div class="card">
+  <div class="ct">◈ AD MANAGEMENT</div>
+  <div class="hint">WhatsApp ya koi bhi link ki ad — users ko app mein dikhegi</div>
+  <div class="flex" style="margin-bottom:14px;">
+    <label class="tg"><input type="checkbox" id="adOn"><span class="ts"></span></label>
+    <span style="font-size:12px;color:var(--text2);">Ad Enable karo</span>
+  </div>
+  <div class="g2">
+    <div>
+      <lbl>AD TEXT</lbl><input id="adTxt" type="text" placeholder="Aaj ka special game!">
+      <lbl>BUTTON TEXT</lbl><input id="adBtn" type="text" placeholder="👉 WhatsApp pe aao">
+    </div>
+    <div>
+      <lbl>LINK</lbl><input id="adLnk" type="text" placeholder="https://wa.me/91XXXXXXXXXX">
+      <button class="btn btn-green btn-full" id="adSaveBtn" onclick="saveAd()">💾 AD SAVE KARO</button>
+    </div>
+  </div>
+  <div id="adMsg"></div>
+</div>
+
+<!-- PASSWORD MANAGER -->
+<div class="card">
+  <div class="ct">◈ PASSWORD MANAGER</div>
+  <div class="g2">
+    <div>
+      <lbl>USER KA NAAM</lbl><input id="nName" type="text" placeholder="Rahul, Priya...">
+      <lbl>PLAN</lbl>
+      <select id="nDays">
+        <option value="30">👑 ₹599 — 30 din (PRO · 4 locations)</option>
+        <option value="7">⚡ ₹199 — 7 din (BASIC · 2 locations)</option>
+        <option value="3">🔮 ₹99 — 3 din (TRIAL · All Game)</option>
+      </select>
+    </div>
+    <div style="display:flex;flex-direction:column;justify-content:center;gap:10px;">
+      <button class="btn btn-full" id="genBtn" onclick="genPwd()" style="touch-action:manipulation;">+ NAYA CODE BANAO</button>
+      <div id="pwMsg"></div>
+    </div>
+  </div>
+  <div class="divider"></div>
+  <div style="font-size:10px;color:var(--text3);margin-bottom:8px;font-family:'Space Mono',monospace;">ACTIVE CODES</div>
+  <div class="pwl" id="pwList"><div class="msg minf">Connect karo pehle</div></div>
+</div>
+
+</div>
+<script>
+var S='',P='';
+var _busy={};
+
+function hdr(){return{'Content-Type':'application/json','x-pass':P};}
+function pad(n){return String(n).padStart(2,'0');}
+function sm(id,txt,t){var el=document.getElementById(id);if(!el)return;var cls={ok:'mok',err:'merr',inf:'minf'}[t]||'minf';el.innerHTML='<div class="msg '+cls+'">'+txt+'</div>';}
+
+// Fetch with timeout — fixes file:// CORS error & hanging requests
+function ft(url,opt,ms){
+  ms=ms||15000;
+  return new Promise(function(res,rej){
+    var timer=setTimeout(function(){rej(new Error('Request timeout'));},ms);
+    fetch(url,opt||{}).then(function(r){clearTimeout(timer);res(r);}).catch(function(e){clearTimeout(timer);rej(e);});
+  });
+}
+
+// Button loading state
+function setBusy(key,id,loading,txt){
+  _busy[key]=loading;
+  var el=document.getElementById(id);if(!el)return;
+  el.disabled=loading;el.style.opacity=loading?'0.55':'1';
+  if(txt)el.innerHTML=txt;
+}
+
+var curPlan='trial';
+function switchPlan(p){
+  curPlan=p;
+  document.querySelectorAll('.plan-panel').forEach(function(el){el.classList.remove('active');});
+  document.getElementById('panel-'+p).classList.add('active');
+  var tabs=document.querySelectorAll('.ptab');
+  var map={trial:0,basic:1,pro:2};
+  tabs.forEach(function(t){t.className='ptab';});
+  tabs[map[p]].className='ptab active-'+p;
+}
+
+function getNums(cls){var a=[];document.querySelectorAll('.'+cls).forEach(function(i){var v=parseInt(i.value);if(!isNaN(v)&&v>=0&&v<=99)a.push(v);});return a;}
+function getVal(id){var el=document.getElementById(id);return el?el.value.trim():'';}
+
+async function connect(){
+  if(_busy.connect)return;
+  var raw=document.getElementById('sUrl').value.trim().replace(/\/$/,'');
+  if(!raw){sm('cMsg','URL daalo','err');return;}
+  if(!raw.startsWith('http'))raw='https://'+raw;
+  S=raw;P=document.getElementById('sPass').value.trim()||'NUMEXADMIN2026';
+  document.getElementById('sUrl').value=raw;
+  setBusy('connect','connectBtn',true,'⏳ Connecting...');
+  sm('cMsg','⏳ Connecting...','inf');
+  try{
+    var r=await ft(S+'/admin/data',{headers:hdr()},15000);
+    var d=await r.json();
+    if(!d.ok)throw new Error('Auth failed');
+    setCs('ok');sm('cMsg','✓ Connected — Server live hai!','ok');
+    upStats(d);renderPwds(d.passwords||[]);
+    if(d.today)showPrev(d.today);
+    loadAd();
+    localStorage.setItem('wxk_au',S);localStorage.setItem('wxk_ap',P);
+  }catch(e){
+    setCs('fail');
+    sm('cMsg','❌ Connect nahi hua — URL aur password check karo','err');
+  }
+  setBusy('connect','connectBtn',false,'🔗 CONNECT KARO');
+}
+function setCs(s){
+  var el=document.getElementById('cs');
+  if(s==='ok'){el.textContent='🟢 Connected';el.className='cs cs-ok';}
+  else if(s==='fail'){el.textContent='🔴 Failed';el.className='cs cs-fail';}
+  else{el.textContent='⚪ Not Connected';el.className='cs cs-off';}
+}
+function upStats(d){
+  document.getElementById('stSold').textContent=d.sold||0;
+  document.getElementById('stRev').textContent='₹'+(d.revenue||0);
+  var now=Date.now();
+  var act=(d.passwords||[]).filter(function(p){return p.used&&p.userExpiry>now;}).length;
+  document.getElementById('stAct').textContent=act;
+  document.getElementById('stPwd').textContent=(d.passwords||[]).length;
+}
+
+async function savePred(){
+  if(!S){alert('Pehle connect karo');return;}
+  if(_busy.save)return;
+  var plan99={locations:[{
+    name:getVal('t99-name')||'All Game',
+    single:getNums('t99-single'),
+    spots:[getNums('t99-spot1'),getNums('t99-spot2')]
+  }]};
+  var plan199={locations:[
+    {name:getVal('b199-name1')||'Location 1',single:getNums('b199-s1-single'),spots:[getNums('b199-s1-spot1'),getNums('b199-s1-spot2')]},
+    {name:getVal('b199-name2')||'Location 2',single:getNums('b199-s2-single'),spots:[getNums('b199-s2-spot1'),getNums('b199-s2-spot2')]}
+  ]};
+  var plan599={locations:[
+    {name:getVal('p599-name1')||'Location 1',single:getNums('p599-s1-single'),spots:[getNums('p599-s1-spot1'),getNums('p599-s1-spot2')]},
+    {name:getVal('p599-name2')||'Location 2',single:getNums('p599-s2-single'),spots:[getNums('p599-s2-spot1'),getNums('p599-s2-spot2')]},
+    {name:getVal('p599-name3')||'Location 3',single:getNums('p599-s3-single'),spots:[getNums('p599-s3-spot1'),getNums('p599-s3-spot2')]},
+    {name:getVal('p599-name4')||'Location 4',single:getNums('p599-s4-single'),spots:[getNums('p599-s4-spot1'),getNums('p599-s4-spot2')]}
+  ]};
+  setBusy('save','saveBtn',true,'⏳ Saving...');
+  sm('pMsg','⏳ Saving...','inf');
+  try{
+    var r=await ft(S+'/admin/predict',{method:'POST',headers:hdr(),body:JSON.stringify({plan99:plan99,plan199:plan199,plan599:plan599})},15000);
+    var d=await r.json();
+    if(d.ok){sm('pMsg','✅ Saved! Users ko ab dikhega.','ok');showPrev(d.prediction);}
+    else sm('pMsg','❌ '+(d.msg||'Error'),'err');
+  }catch(e){sm('pMsg','❌ Error: '+e.message,'err');}
+  setBusy('save','saveBtn',false,'⚡ SAVE — USERS KO DIKHAO');
+}
+
+async function clearPred(){
+  if(!S||!confirm('Clear karein?'))return;
+  try{
+    await ft(S+'/admin/today',{method:'DELETE',headers:hdr()},10000);
+    sm('pMsg','✅ Cleared','ok');
+    document.getElementById('predPrev').style.display='none';
+  }catch(e){sm('pMsg','❌ Error','err');}
+}
+
+function showPrev(pred){
+  if(!pred)return;
+  var html='';
+  ['plan99','plan199','plan599'].forEach(function(pk){
+    if(!pred[pk])return;
+    var label={plan99:'🔮 TRIAL (₹99)',plan199:'⚡ BASIC (₹199)',plan599:'👑 PRO (₹599)'}[pk];
+    html+='<div style="margin-bottom:10px;padding:10px;background:var(--bg3);border-radius:8px;border:1px solid var(--border);">';
+    html+='<div style="font-size:10px;color:var(--text3);font-family:Space Mono,monospace;margin-bottom:6px;">'+label+'</div>';
+    (pred[pk].locations||[]).forEach(function(loc){
+      html+='<div style="font-size:11px;color:var(--text2);margin-bottom:4px;">📍 <strong>'+loc.name+'</strong> · Single: '+(loc.single||[]).map(pad).join(' ')+' · Spot1: '+((loc.spots||[])[0]||[]).map(pad).join(' ')+'</div>';
+    });
+    html+='</div>';
+  });
+  document.getElementById('prevContent').innerHTML=html;
+  document.getElementById('predPrev').style.display='block';
+}
+
+async function saveAd(){
+  if(_busy.ad)return;
+  if(!S){var u=localStorage.getItem('wxk_au');if(u){S=u;P=localStorage.getItem('wxk_ap')||'NUMEXADMIN2026';}else{alert('Connect karo');return;}}
+  var enabled=document.getElementById('adOn').checked;
+  var text=document.getElementById('adTxt').value.trim();
+  var link=document.getElementById('adLnk').value.trim();
+  var label=document.getElementById('adBtn').value.trim()||'Contact Karo';
+  if(enabled&&(!text||!link)){sm('adMsg','⚠ Text aur Link dono daalo','err');return;}
+  setBusy('ad','adSaveBtn',true,'⏳ Saving...');
+  sm('adMsg','⏳ Saving...','inf');
+  try{
+    var r=await ft(S+'/admin/ad',{method:'POST',headers:hdr(),body:JSON.stringify({enabled:enabled,text:text,link:link,label:label})},10000);
+    var d=await r.json();
+    if(d.ok)sm('adMsg',enabled?'✅ Ad live! Users ko dikhegi.':'✅ Ad band kar di.','ok');
+    else sm('adMsg','❌ Error','err');
+  }catch(e){sm('adMsg','❌ '+e.message,'err');}
+  setBusy('ad','adSaveBtn',false,'💾 AD SAVE KARO');
+}
+async function loadAd(){
+  if(!S)return;
+  try{
+    var r=await ft(S+'/admin/ad',{headers:hdr()},10000);if(!r.ok)return;
+    var d=await r.json();
+    if(d.ok&&d.ad){
+      document.getElementById('adOn').checked=!!d.ad.enabled;
+      document.getElementById('adTxt').value=d.ad.text||'';
+      document.getElementById('adLnk').value=d.ad.link||'';
+      document.getElementById('adBtn').value=d.ad.label||'';
+    }
+  }catch(e){}
+}
+
+async function genPwd(){
+  if(!S){alert('Pehle connect karo');return;}
+  if(_busy.gen)return;
+  var name=document.getElementById('nName').value.trim()||'User';
+  var days=+document.getElementById('nDays').value||30;
+  setBusy('gen','genBtn',true,'⏳ Generating...');
+  try{
+    var r=await ft(S+'/admin/pwd',{method:'POST',headers:hdr(),body:JSON.stringify({name:name,days:days})},10000);
+    var d=await r.json();
+    if(d.ok){
+      document.getElementById('pwMsg').innerHTML='<div class="msg mok">✅ CODE: <strong style="font-size:16px;letter-spacing:3px;color:var(--gold)">'+d.code+'</strong><br><span style="font-size:10px;color:var(--text3);">'+d.days+' din · ₹'+d.price+'</span></div>';
+      document.getElementById('nName').value='';
+      setTimeout(refresh,600);
+    }else{sm('pwMsg','❌ '+(d.msg||'Error'),'err');}
+  }catch(e){sm('pwMsg','❌ Error: '+e.message,'err');}
+  setBusy('gen','genBtn',false,'+ NAYA CODE BANAO');
+}
+async function delPwd(code){
+  if(!confirm('Delete '+code+'?'))return;
+  try{await ft(S+'/admin/pwd/'+code,{method:'DELETE',headers:hdr()},10000);refresh();}catch(e){}
+}
+async function forceLogout(code){
+  if(!confirm(code+' ko force logout karein? Unhe dobara code daalna padega.'))return;
+  try{
+    var r=await ft(S+'/admin/logout/'+code,{method:'POST',headers:hdr()},10000);
+    var d=await r.json();
+    if(d.ok){showToast('✅ '+code+' logout ho gaya');setTimeout(refresh,400);}
+    else alert(d.msg||'Error hua');
+  }catch(e){alert('Network error: '+e.message);}
+}
+function showToast(m){
+  var t=document.getElementById('adminToast');
+  if(!t){
+    t=document.createElement('div');
+    t.id='adminToast';
+    t.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#001a0d;border:1px solid #10b98144;color:#10b981;padding:10px 22px;border-radius:8px;font-size:11px;font-family:Space Mono,monospace;z-index:9999;pointer-events:none;transition:opacity .3s;';
+    document.body.appendChild(t);
+  }
+  t.textContent=m;t.style.opacity='1';
+  setTimeout(function(){t.style.opacity='0';},2500);
+}
+function renderPwds(pwds){
+  var now=Date.now();
+  if(!pwds.length){document.getElementById('pwList').innerHTML='<div class="msg minf">Koi codes nahi hain</div>';return;}
+  var sorted=[...pwds].sort(function(a,b){
+    var as=!a.used&&a.expiry>now?0:a.used&&a.userExpiry&&a.userExpiry>now?1:2;
+    var bs=!b.used&&b.expiry>now?0:b.used&&b.userExpiry&&b.userExpiry>now?1:2;
+    return as-bs||(b.createdAt-a.createdAt);
+  });
+  document.getElementById('pwList').innerHTML=sorted.map(function(p){
+    var isActive=!p.used&&p.expiry>now;
+    var isLive=p.used&&p.userExpiry&&p.userExpiry>now;
+    var sessionOn=p.sessionActive===true;
+    var tag=isActive?'<span class="tag ta">⚡ UNUSED</span>':isLive?(sessionOn?'<span class="tag ta">🟢 ONLINE</span>':'<span class="tag" style="background:#1a0d00;color:#f5a623;border:1px solid #f5a62333;">💤 OFFLINE</span>'):'<span class="tag te">✗ DONE</span>';
+    var dl=p.userExpiry?Math.max(0,Math.ceil((p.userExpiry-now)/86400000)):p.days;
+    var planLabel={3:'TRIAL',7:'BASIC',30:'PRO'}[p.days]||'PRO';
+    var actionBtn='';
+    if(isActive) actionBtn='<button class="btn btn-red" onclick="delPwd(\'' + p.code + '\')">DEL</button>';
+    if(isLive)   actionBtn='<button class="btn btn-red" style="font-size:9px;padding:4px 10px;" onclick="forceLogout(\'' + p.code + '\')">🚪 LOGOUT</button>';
+    return '<div class="pwr">'+
+      '<div style="flex:1;min-width:110px;"><div class="pwc">'+p.code+'</div>'+
+      '<div class="pwm">'+(p.name||'User')+' · '+planLabel+' · '+p.days+'d'+(p.used?' · '+dl+'d left':'')+' · ₹'+(p.price||'—')+'</div></div>'+
+      tag+actionBtn+
+      '</div>';
+  }).join('');
+}
+
+async function refresh(){
+  if(!S)return;
+  try{
+    var r=await ft(S+'/admin/data',{headers:hdr()},10000);
+    var d=await r.json();
+    if(d.ok){upStats(d);renderPwds(d.passwords||[]);if(d.today)showPrev(d.today);}
+  }catch(e){}
+}
+
+window.onload=function(){
+  var u=localStorage.getItem('wxk_au'),p=localStorage.getItem('wxk_ap');
+  if(u){document.getElementById('sUrl').value=u;S=u;}
+  if(p){document.getElementById('sPass').value=p;P=p;}
+  if(u&&p)setTimeout(connect,500);
+};
+</script>
+</body>
+</html>
